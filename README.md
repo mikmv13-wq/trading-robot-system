@@ -1,1 +1,165 @@
 # Trading Robot System
+
+Каркас системы для разработки торговых роботов. На текущем этапе реализован только модуль сбора и подготовки исторических рыночных данных из T-Invest API.
+
+## Текущая модель данных
+
+Проект рассчитан на основной рабочий сценарий:
+
+- около **30 акций**;
+- до **5 лет истории**;
+- источник истины — сырые свечи **1 минута**;
+- производные таймфреймы — **15 минут, 30 минут и 1 час**;
+- агрегаты всегда строятся локально из raw 1m, а не загружаются отдельно у брокера.
+
+При 500–600 торговых минутах в день это ориентировочно 19–23 млн минутных свечей за 5 лет для 30 инструментов. Архитектура не привязана к этой оценке и допускает существенно больший объём при расширенных торговых сессиях.
+
+## Хранение: Parquet + DuckDB
+
+Сами свечи хранятся в колонночных Parquet-файлах с Zstandard compression. DuckDB используется как компактный каталог operational state и SQL-движок поверх Parquet: в нём находятся checkpoint-ы, метаданные партиций и views, но исторические свечи физически не копируются внутрь базы.
+
+Партиционирование:
+
+```text
+data/market/
+  1m/
+    instrument_id=<ID>/year=2026/month=09/candles.parquet
+  15m/
+    instrument_id=<ID>/year=2026/month=09/candles.parquet
+  30m/
+    instrument_id=<ID>/year=2026/month=09/candles.parquet
+  1h/
+    instrument_id=<ID>/year=2026/month=09/candles.parquet
+```
+
+Для 30 инструментов и 5 лет это примерно 1 800 raw-партиций и столько же на каждый агрегированный таймфрейм. Такой размер удобен для локального анализа, бэктестов, резервного копирования и последующего чтения DuckDB/Polars/Pandas/Spark без миграции формата.
+
+## Что реализовано
+
+- загрузка исторических свечей T-Invest с интервалом 1 минута;
+- список инструментов из YAML-настроек;
+- разбиение запросов на окна не длиннее 24 часов;
+- только завершённые свечи;
+- retry/backoff и обработка HTTP 429;
+- возобновление от последней сохранённой свечи с overlap;
+- raw 1m в Parquet с месячными партициями;
+- атомарная перезапись только изменившейся месячной партиции;
+- уникальность raw-свечей по `(instrument_id, time)` при merge;
+- DuckDB-каталог с метаданными партиций и checkpoint-ами;
+- SQL views `candles_1m`, `candles_15m`, `candles_30m`, `candles_1h` поверх Parquet;
+- чтение и запись Parquet выполняет DuckDB, отдельная зависимость `pyarrow` не требуется;
+- dirty-флаг для месяцев, которые нужно переагрегировать;
+- построение 15m/30m/1h из raw 1m;
+- автоматический пересчёт только dirty-партиций после загрузки;
+- ручная полная перестройка агрегатов;
+- цены OHLC хранятся как целые `nano`, без `float`.
+
+## Быстрый старт
+
+Требуется Python 3.11+.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+pip install -e .[dev]
+cp config/settings.example.yaml config/settings.yaml
+```
+
+Задайте токен T-Invest API:
+
+```bash
+export T_INVEST_TOKEN='...'
+```
+
+Запуск сбора raw 1m и последующей агрегации dirty-месяцев:
+
+```bash
+trading-data collect --config config/settings.yaml
+```
+
+Пересчитать только изменившиеся месяцы вручную:
+
+```bash
+trading-data aggregate --config config/settings.yaml
+```
+
+Полностью перестроить все 15m/30m/1h из raw 1m:
+
+```bash
+trading-data aggregate --config config/settings.yaml --all
+```
+
+Статус набора данных:
+
+```bash
+trading-data status --config config/settings.yaml
+```
+
+## Конфигурация
+
+```yaml
+collector:
+  interval: 1m
+  history_from: "2021-01-01T00:00:00Z"
+  request_window_hours: 24
+  overlap_minutes: 5
+
+storage:
+  root_path: data/market
+  catalog_path: data/trading.duckdb
+  compression: zstd
+
+aggregations:
+  enabled: true
+  intervals: [15m, 30m, 1h]
+  run_after_collect: true
+```
+
+В `instruments` задаётся рабочий список примерно из 30 акций. `instrument_id` может быть FIGI, UID или `ticker_classCode`, принимаемый T-Invest API.
+
+## DuckDB-каталог
+
+`data/trading.duckdb` хранит только служебные таблицы и представления:
+
+- `partitions` — row count, диапазон времени, dirty-флаг и время обновления по каждой месячной партиции;
+- `system_metadata` — версия схемы каталога;
+- `candles_1m`, `candles_15m`, `candles_30m`, `candles_1h` — SQL views, которые читают соответствующие Parquet-файлы напрямую.
+
+Пример локального запроса:
+
+```sql
+SELECT time, open_nano, high_nano, low_nano, close_nano, volume
+FROM candles_15m
+WHERE instrument_id = 'BBG004730N88'
+  AND time >= TIMESTAMPTZ '2026-01-01 00:00:00+00'
+ORDER BY time;
+```
+
+Views используют glob по текущему `root_path`. При `initialize()` они перепривязываются к текущему абсолютному пути, поэтому каталог остаётся работоспособным после переноса проекта/данных. Если `.duckdb`-файл потерян или создаётся заново при уже существующем Parquet, каталог автоматически восстанавливает метаданные из файлов; raw-партиции помечаются dirty, чтобы агрегаты можно было безопасно пересчитать.
+
+## Правило источника истины
+
+`1m` — immutable-by-meaning raw layer: значения не преобразуются индикаторами и стратегиями. Повторная загрузка одной и той же минуты может обновить запись, если T-Invest вернул уточнённую завершённую свечу.
+
+`15m`, `30m`, `1h` — полностью воспроизводимые derived datasets. Их можно удалить и построить заново только из raw 1m.
+
+Агрегация использует:
+
+- Open — первая 1m свеча интервала;
+- High — максимум High;
+- Low — минимум Low;
+- Close — последняя 1m свеча;
+- Volume — сумма объёма.
+
+Границы интервалов выравниваются по UTC-часам/минутам. Для московского рынка это также даёт стандартные границы `:00/:15/:30/:45`, поскольку Москва имеет целочасовой UTC offset.
+
+## Архитектура системы
+
+Полное описание целевой системы и текущего data-модуля находится в [`docs/system_description.md`](docs/system_description.md).
+
+## Проверка
+
+```bash
+pytest
+ruff check .
+```
