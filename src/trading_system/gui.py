@@ -208,7 +208,7 @@ def _render_chart(storage: ParquetCandleStorage, settings: Settings) -> None:
     c1, c2, c3 = st.columns(3)
     label = c1.selectbox("Инструмент", list(by_label))
     timeframe = c2.selectbox("Таймфрейм", ["1m", "15m", "30m", "1h"], index=1)
-    period = c3.selectbox("Период", [7, 30, 90, 365], index=1, format_func=lambda x: f"{x} дней")
+    period = c3.selectbox(\n        "Период",\n        [7, 30, 90, 365],\n        index=1,\n        format_func=lambda value: f"{value} дней",\n    )
 
     until = datetime.now(timezone.utc)
     from_ = until - timedelta(days=period)
