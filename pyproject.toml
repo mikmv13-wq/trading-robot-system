@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trading-robot-system"
-version = "0.3.0"
+version = "0.4.0"
 description = "Trading robot platform; scalable T-Invest 1m data collection with Parquet and DuckDB"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,6 +12,8 @@ dependencies = [
   "duckdb>=1.3,<2",
   "httpx>=0.27,<1",
   "PyYAML>=6.0,<7",
+  "pandas>=2.2,<3",
+  "streamlit>=1.40,<2",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +24,7 @@ dev = [
 
 [project.scripts]
 trading-data = "trading_system.data_collection.cli:main"
+trading-gui = "trading_system.gui_launcher:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
