@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Protocol
 
-from trading_system.domain import Candle1m, Instrument, Universe
+from trading_system.domain import Candle1m, CandleDataStats, Instrument, Universe
 
 
 class Repository(Protocol):
@@ -35,7 +36,25 @@ class MarketRepository(Repository, Protocol):
 
     def insert_candle(self, candle: Candle1m) -> None: ...
 
+    def upsert_candles(self, candles: Sequence[Candle1m]) -> None: ...
+
+    def get_candles(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+    ) -> tuple[Candle1m, ...]: ...
+
     def list_candles(self, instrument_uid: str) -> tuple[Candle1m, ...]: ...
+
+    def get_candle_stats(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+    ) -> CandleDataStats: ...
 
 
 class ResearchRepository(Repository, Protocol):
