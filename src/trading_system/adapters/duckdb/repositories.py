@@ -212,7 +212,7 @@ class DuckDBMarketRepository(DuckDBRepository):
                 exchange = EXCLUDED.exchange,
                 instrument_type = EXCLUDED.instrument_type,
                 active = EXCLUDED.active,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = now()
             """,
             [
                 instrument.instrument_uid,
@@ -243,7 +243,7 @@ class DuckDBMarketRepository(DuckDBRepository):
             VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (universe_id) DO UPDATE SET
                 name = EXCLUDED.name,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = now()
             """,
             [universe.universe_id, universe.name],
         )
