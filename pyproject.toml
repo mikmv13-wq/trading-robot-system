@@ -12,6 +12,7 @@ dependencies = [
     "duckdb>=1.4,<2.0",
     "keyring>=25,<27",
     "pydantic-settings>=2.10,<3.0",
+    "pytz>=2024.1",
     "PySide6>=6.8,<7.0",
     "typer>=0.20,<1.0",
 ]
