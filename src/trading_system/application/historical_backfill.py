@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from trading_system.application.jobs import JobContext, JobManager
-from trading_system.domain import CandleDataStats
+from trading_system.domain import (
+    CandleDataStats,
+    IngestionCheckpoint,
+    IngestionStatus,
+)
 from trading_system.ports import MarketRepository, TInvestMarketDataClient
 
 
@@ -15,6 +19,10 @@ class HistoricalBackfillError(RuntimeError):
 
 class BackfillUniverseNotFoundError(HistoricalBackfillError):
     """Raised when the requested universe has not been synchronized yet."""
+
+
+class BackfillCheckpointNotFoundError(HistoricalBackfillError):
+    """Raised when resume is requested before a checkpoint exists."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +89,8 @@ class HistoricalBackfillResult:
 
 
 class BackfillHistoricalCandlesUseCase:
+    INTERVAL = "1m"
+
     def __init__(
         self,
         market_data: TInvestMarketDataClient,
@@ -105,6 +115,7 @@ class BackfillHistoricalCandlesUseCase:
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
         context: JobContext | None = None,
+        resume: bool = False,
     ) -> HistoricalBackfillResult:
         universe = self._market_repository.get_universe(universe_id)
         if universe is None:
@@ -112,58 +123,154 @@ class BackfillHistoricalCandlesUseCase:
                 f"universe {universe_id!r} has not been synchronized"
             )
 
-        resolved_from, resolved_to = self._resolve_range(from_ts, to_ts)
-        chunks = self._chunk_planner.plan(resolved_from, resolved_to)
-        total_steps = len(universe.instrument_uids) * len(chunks)
+        if resume:
+            if from_ts is not None or to_ts is not None:
+                raise ValueError("resume uses the range stored in checkpoints")
+            resolved_from, resolved_to = self._resume_range(universe.instrument_uids)
+        else:
+            resolved_from, resolved_to = self._resolve_range(from_ts, to_ts)
+            for instrument_uid in universe.instrument_uids:
+                self._market_repository.save_ingestion_checkpoint(
+                    IngestionCheckpoint(
+                        instrument_uid=instrument_uid,
+                        interval=self.INTERVAL,
+                        requested_from=resolved_from,
+                        requested_to=resolved_to,
+                        completed_until=None,
+                        status=IngestionStatus.PENDING,
+                    )
+                )
+
+        full_chunks = self._chunk_planner.plan(resolved_from, resolved_to)
+        total_steps = len(universe.instrument_uids) * len(full_chunks)
         completed_steps = 0
-        results: list[InstrumentBackfillResult] = []
+        instrument_starts: dict[str, datetime] = {}
+
+        for instrument_uid in universe.instrument_uids:
+            checkpoint = self._checkpoint_for_range(
+                instrument_uid,
+                resolved_from,
+                resolved_to,
+            )
+            start = checkpoint.completed_until or resolved_from
+            instrument_starts[instrument_uid] = start
+            completed_steps += self._completed_chunk_count(
+                resolved_from,
+                resolved_to,
+                start,
+            )
 
         if context is not None:
             context.report_progress(
-                0.0,
+                completed_steps / total_steps if total_steps else 1.0,
                 (
-                    f"Backfill {len(universe.instrument_uids)} instruments, "
-                    f"{len(chunks)} chunks each"
+                    f"Backfill {len(universe.instrument_uids)} instruments; "
+                    f"{completed_steps}/{total_steps} chunks complete"
                 ),
             )
 
+        results: list[InstrumentBackfillResult] = []
         for instrument_index, instrument_uid in enumerate(
             universe.instrument_uids,
             start=1,
         ):
-            fetched_candles = 0
+            start = instrument_starts[instrument_uid]
             requests = 0
+            fetched_candles = 0
 
-            for chunk_index, chunk in enumerate(chunks, start=1):
-                if context is not None:
-                    context.raise_if_cancelled()
-
-                candles = self._market_data.get_candles(
+            if start >= resolved_to:
+                self._save_checkpoint(
                     instrument_uid,
-                    chunk.from_ts,
-                    chunk.to_ts,
+                    resolved_from,
+                    resolved_to,
+                    resolved_to,
+                    IngestionStatus.COMPLETED,
+                )
+            else:
+                self._save_checkpoint(
+                    instrument_uid,
+                    resolved_from,
+                    resolved_to,
+                    start if start > resolved_from else None,
+                    IngestionStatus.RUNNING,
                 )
 
-                if context is not None:
-                    context.raise_if_cancelled()
-
-                self._market_repository.upsert_candles(candles)
-                requests += 1
-                fetched_candles += len(candles)
-                completed_steps += 1
-
-                if context is not None:
-                    context.report_progress(
-                        completed_steps / total_steps,
-                        (
-                            f"Instrument {instrument_index}/"
-                            f"{len(universe.instrument_uids)} {instrument_uid}; "
-                            f"chunk {chunk_index}/{len(chunks)} "
-                            f"{chunk.from_ts:%Y-%m-%d %H:%M} -> "
-                            f"{chunk.to_ts:%Y-%m-%d %H:%M}; "
-                            f"fetched {fetched_candles}"
-                        ),
+                remaining_chunks = self._chunk_planner.plan(start, resolved_to)
+                for chunk_index, chunk in enumerate(remaining_chunks, start=1):
+                    self._cancel_if_requested(
+                        context,
+                        instrument_uid,
+                        resolved_from,
+                        resolved_to,
+                        chunk.from_ts if chunk.from_ts > resolved_from else None,
                     )
+
+                    try:
+                        candles = self._market_data.get_candles(
+                            instrument_uid,
+                            chunk.from_ts,
+                            chunk.to_ts,
+                        )
+                    except Exception as exc:
+                        self._save_checkpoint(
+                            instrument_uid,
+                            resolved_from,
+                            resolved_to,
+                            chunk.from_ts if chunk.from_ts > resolved_from else None,
+                            IngestionStatus.FAILED,
+                            last_error=f"{type(exc).__name__}: {exc}",
+                        )
+                        raise
+
+                    self._cancel_if_requested(
+                        context,
+                        instrument_uid,
+                        resolved_from,
+                        resolved_to,
+                        chunk.from_ts if chunk.from_ts > resolved_from else None,
+                    )
+
+                    try:
+                        self._market_repository.upsert_candles(candles)
+                        status = (
+                            IngestionStatus.COMPLETED
+                            if chunk.to_ts == resolved_to
+                            else IngestionStatus.RUNNING
+                        )
+                        self._save_checkpoint(
+                            instrument_uid,
+                            resolved_from,
+                            resolved_to,
+                            chunk.to_ts,
+                            status,
+                        )
+                    except Exception as exc:
+                        self._save_checkpoint(
+                            instrument_uid,
+                            resolved_from,
+                            resolved_to,
+                            chunk.from_ts if chunk.from_ts > resolved_from else None,
+                            IngestionStatus.FAILED,
+                            last_error=f"{type(exc).__name__}: {exc}",
+                        )
+                        raise
+
+                    requests += 1
+                    fetched_candles += len(candles)
+                    completed_steps += 1
+
+                    if context is not None:
+                        context.report_progress(
+                            completed_steps / total_steps,
+                            (
+                                f"Instrument {instrument_index}/"
+                                f"{len(universe.instrument_uids)} {instrument_uid}; "
+                                f"chunk {chunk_index}/{len(remaining_chunks)} "
+                                f"{chunk.from_ts:%Y-%m-%d %H:%M} -> "
+                                f"{chunk.to_ts:%Y-%m-%d %H:%M}; "
+                                f"fetched {fetched_candles}"
+                            ),
+                        )
 
             stats = self._market_repository.get_candle_stats(
                 instrument_uid,
@@ -186,6 +293,120 @@ class BackfillHistoricalCandlesUseCase:
             instruments=tuple(results),
         )
 
+    def _resume_range(
+        self,
+        instrument_uids: tuple[str, ...],
+    ) -> tuple[datetime, datetime]:
+        checkpoints = tuple(
+            checkpoint
+            for instrument_uid in instrument_uids
+            if (
+                checkpoint := self._market_repository.get_ingestion_checkpoint(
+                    instrument_uid,
+                    self.INTERVAL,
+                )
+            )
+            is not None
+        )
+        if not checkpoints:
+            raise BackfillCheckpointNotFoundError(
+                "no 1m ingestion checkpoints are available to resume"
+            )
+
+        ranges = {
+            (checkpoint.requested_from, checkpoint.requested_to)
+            for checkpoint in checkpoints
+        }
+        if len(ranges) != 1:
+            raise HistoricalBackfillError(
+                "ingestion checkpoints contain inconsistent requested ranges"
+            )
+        return next(iter(ranges))
+
+    def _checkpoint_for_range(
+        self,
+        instrument_uid: str,
+        requested_from: datetime,
+        requested_to: datetime,
+    ) -> IngestionCheckpoint:
+        checkpoint = self._market_repository.get_ingestion_checkpoint(
+            instrument_uid,
+            self.INTERVAL,
+        )
+        if checkpoint is None:
+            checkpoint = IngestionCheckpoint(
+                instrument_uid=instrument_uid,
+                interval=self.INTERVAL,
+                requested_from=requested_from,
+                requested_to=requested_to,
+                completed_until=None,
+                status=IngestionStatus.PENDING,
+            )
+            self._market_repository.save_ingestion_checkpoint(checkpoint)
+            return checkpoint
+
+        if (
+            checkpoint.requested_from != requested_from
+            or checkpoint.requested_to != requested_to
+        ):
+            raise HistoricalBackfillError(
+                f"checkpoint range mismatch for instrument {instrument_uid}"
+            )
+        return checkpoint
+
+    def _completed_chunk_count(
+        self,
+        requested_from: datetime,
+        requested_to: datetime,
+        completed_until: datetime,
+    ) -> int:
+        if completed_until <= requested_from:
+            return 0
+        if completed_until >= requested_to:
+            return len(self._chunk_planner.plan(requested_from, requested_to))
+        return len(self._chunk_planner.plan(requested_from, completed_until))
+
+    def _save_checkpoint(
+        self,
+        instrument_uid: str,
+        requested_from: datetime,
+        requested_to: datetime,
+        completed_until: datetime | None,
+        status: IngestionStatus,
+        *,
+        last_error: str | None = None,
+    ) -> None:
+        self._market_repository.save_ingestion_checkpoint(
+            IngestionCheckpoint(
+                instrument_uid=instrument_uid,
+                interval=self.INTERVAL,
+                requested_from=requested_from,
+                requested_to=requested_to,
+                completed_until=completed_until,
+                status=status,
+                last_error=last_error,
+            )
+        )
+
+    def _cancel_if_requested(
+        self,
+        context: JobContext | None,
+        instrument_uid: str,
+        requested_from: datetime,
+        requested_to: datetime,
+        completed_until: datetime | None,
+    ) -> None:
+        if context is None or not context.is_cancel_requested():
+            return
+        self._save_checkpoint(
+            instrument_uid,
+            requested_from,
+            requested_to,
+            completed_until,
+            IngestionStatus.CANCELLED,
+        )
+        context.raise_if_cancelled()
+
     def _resolve_range(
         self,
         from_ts: datetime | None,
@@ -202,7 +423,7 @@ class BackfillHistoricalCandlesUseCase:
 
 
 class HistoricalBackfillService:
-    """Start historical backfill as a cancellable background job."""
+    """Start or resume historical backfill as a cancellable background job."""
 
     def __init__(
         self,
@@ -229,6 +450,19 @@ class HistoricalBackfillService:
 
         return self._manager.submit(
             f"Historical 1m backfill: {universe_id}",
+            task,
+        )
+
+    def resume(self, universe_id: str = "default") -> str:
+        def task(context: JobContext) -> HistoricalBackfillResult:
+            return self._use_case.execute(
+                universe_id,
+                context=context,
+                resume=True,
+            )
+
+        return self._manager.submit(
+            f"Resume historical 1m backfill: {universe_id}",
             task,
         )
 
