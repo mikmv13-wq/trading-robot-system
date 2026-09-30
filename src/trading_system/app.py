@@ -18,6 +18,7 @@ def create_main_window(services: ApplicationServices) -> MainWindow:
         services.get_system_status,
         services.jobs,
         services.tinvest_token,
+        services.data,
     )
 
 
