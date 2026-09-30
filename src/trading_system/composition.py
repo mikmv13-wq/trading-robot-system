@@ -10,7 +10,10 @@ from trading_system.adapters.duckdb import (
     DuckDBResearchRepository,
 )
 from trading_system.adapters.keychain import KeyringSecretStorage
-from trading_system.adapters.tinvest import TInvestInstrumentsRestClient, TInvestMarketDataRestClient
+from trading_system.adapters.tinvest import (
+    TInvestInstrumentsRestClient,
+    TInvestMarketDataRestClient,
+)
 from trading_system.application import (
     BootstrapDatabasesUseCase,
     GetSystemStatusUseCase,
