@@ -9,7 +9,14 @@ from typing import Any
 import duckdb
 
 from trading_system.adapters.duckdb.connection import DuckDBConnectionFactory
-from trading_system.domain import Candle1m, CandleDataStats, Instrument, Universe
+from trading_system.domain import (
+    Candle1m,
+    CandleDataStats,
+    IngestionCheckpoint,
+    IngestionStatus,
+    Instrument,
+    Universe,
+)
 
 
 class RepositoryError(RuntimeError):
@@ -417,6 +424,88 @@ class DuckDBMarketRepository(DuckDBRepository):
             row_count=row_count,
             min_timestamp=None if row[1] is None else row[1].astimezone(UTC),
             max_timestamp=None if row[2] is None else row[2].astimezone(UTC),
+        )
+
+    def save_ingestion_checkpoint(
+        self,
+        checkpoint: IngestionCheckpoint,
+    ) -> None:
+        with self._verified_connection(read_only=False) as connection:
+            connection.execute(
+                """
+                INSERT INTO ingestion_checkpoints(
+                    instrument_uid,
+                    interval,
+                    requested_from,
+                    requested_to,
+                    completed_until,
+                    status,
+                    last_error,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, now())
+                ON CONFLICT (instrument_uid, interval) DO UPDATE SET
+                    requested_from = EXCLUDED.requested_from,
+                    requested_to = EXCLUDED.requested_to,
+                    completed_until = EXCLUDED.completed_until,
+                    status = EXCLUDED.status,
+                    last_error = EXCLUDED.last_error,
+                    updated_at = now()
+                """,
+                [
+                    checkpoint.instrument_uid,
+                    checkpoint.interval,
+                    checkpoint.requested_from,
+                    checkpoint.requested_to,
+                    checkpoint.completed_until,
+                    checkpoint.status.value,
+                    checkpoint.last_error,
+                ],
+            )
+
+    def get_ingestion_checkpoint(
+        self,
+        instrument_uid: str,
+        interval: str,
+    ) -> IngestionCheckpoint | None:
+        normalized_uid = instrument_uid.strip()
+        normalized_interval = interval.strip()
+        if not normalized_uid:
+            raise ValueError("instrument_uid must not be empty")
+        if not normalized_interval:
+            raise ValueError("interval must not be empty")
+
+        with self._verified_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    instrument_uid,
+                    interval,
+                    requested_from,
+                    requested_to,
+                    completed_until,
+                    status,
+                    last_error,
+                    updated_at
+                FROM ingestion_checkpoints
+                WHERE instrument_uid = ? AND interval = ?
+                """,
+                [normalized_uid, normalized_interval],
+            ).fetchone()
+
+        if row is None:
+            return None
+        return IngestionCheckpoint(
+            instrument_uid=str(row[0]),
+            interval=str(row[1]),
+            requested_from=row[2].astimezone(UTC),
+            requested_to=row[3].astimezone(UTC),
+            completed_until=(
+                None if row[4] is None else row[4].astimezone(UTC)
+            ),
+            status=IngestionStatus(str(row[5])),
+            last_error=None if row[6] is None else str(row[6]),
+            updated_at=row[7].astimezone(UTC),
         )
 
     @staticmethod
