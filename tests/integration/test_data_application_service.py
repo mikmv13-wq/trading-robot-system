@@ -4,11 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from trading_system.adapters.duckdb import DuckDBBootstrapper, DuckDBMarketRepository
-from trading_system.application import (
-    BootstrapDatabasesUseCase,
-    DataApplicationService,
-    JobApplicationService,
-)
+from trading_system.application import BootstrapDatabasesUseCase, DataApplicationService
 from trading_system.config import Settings
 from trading_system.domain import (
     Candle1m,
