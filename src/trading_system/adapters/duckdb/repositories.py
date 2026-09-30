@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+import json
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,10 @@ from trading_system.adapters.duckdb.connection import DuckDBConnectionFactory
 from trading_system.domain import (
     Candle1m,
     CandleDataStats,
+    CandleQualityCounts,
+    DataGap,
+    DataQualityReport,
+    GapClassification,
     IngestionCheckpoint,
     IngestionStatus,
     Instrument,
@@ -507,6 +512,263 @@ class DuckDBMarketRepository(DuckDBRepository):
             last_error=None if row[6] is None else str(row[6]),
             updated_at=row[7].astimezone(UTC),
         )
+
+    def scan_data_gaps(
+        self,
+        universe_id: str,
+        instrument_uid: str,
+        *,
+        from_ts: datetime,
+        to_ts: datetime,
+    ) -> tuple[DataGap, ...]:
+        self._validate_optional_utc(from_ts, "from_ts")
+        self._validate_optional_utc(to_ts, "to_ts")
+        if from_ts >= to_ts:
+            raise ValueError("from_ts must be earlier than to_ts")
+
+        with self._verified_connection() as connection:
+            rows = connection.execute(
+                """
+                WITH observed AS (
+                    SELECT DISTINCT c.ts
+                    FROM candles_1m AS c
+                    JOIN universe_instruments AS ui
+                      ON ui.instrument_uid = c.instrument_uid
+                    WHERE ui.universe_id = ?
+                      AND c.ts >= ?
+                      AND c.ts < ?
+                ),
+                missing AS (
+                    SELECT
+                        o.ts,
+                        row_number() OVER (ORDER BY o.ts) AS rn
+                    FROM observed AS o
+                    LEFT JOIN candles_1m AS target
+                      ON target.instrument_uid = ?
+                     AND target.ts = o.ts
+                    WHERE target.ts IS NULL
+                ),
+                grouped AS (
+                    SELECT
+                        ts,
+                        ts - rn * INTERVAL '1 minute' AS gap_group
+                    FROM missing
+                )
+                SELECT
+                    min(ts) AS start_ts,
+                    max(ts) + INTERVAL '1 minute' AS end_ts
+                FROM grouped
+                GROUP BY gap_group
+                ORDER BY start_ts
+                """,
+                [universe_id, from_ts, to_ts, instrument_uid],
+            ).fetchall()
+
+        return tuple(
+            DataGap(
+                instrument_uid=instrument_uid,
+                start_ts=row[0].astimezone(UTC),
+                end_ts=row[1].astimezone(UTC),
+                classification=GapClassification.MISSING_DURING_OBSERVED_MARKET,
+            )
+            for row in rows
+        )
+
+    def replace_data_gaps(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime,
+        to_ts: datetime,
+        gaps: Sequence[DataGap],
+    ) -> None:
+        with self._verified_connection(read_only=False) as connection:
+            try:
+                connection.execute("BEGIN TRANSACTION")
+                connection.execute(
+                    """
+                    DELETE FROM data_gaps
+                    WHERE instrument_uid = ?
+                      AND start_ts >= ?
+                      AND end_ts <= ?
+                    """,
+                    [instrument_uid, from_ts, to_ts],
+                )
+                if gaps:
+                    connection.executemany(
+                        """
+                        INSERT INTO data_gaps(
+                            instrument_uid,
+                            start_ts,
+                            end_ts,
+                            classification,
+                            detected_at
+                        )
+                        VALUES (?, ?, ?, ?, now())
+                        ON CONFLICT (instrument_uid, start_ts, end_ts)
+                        DO UPDATE SET
+                            classification = EXCLUDED.classification,
+                            detected_at = now()
+                        """,
+                        [
+                            (
+                                gap.instrument_uid,
+                                gap.start_ts,
+                                gap.end_ts,
+                                gap.classification.value,
+                            )
+                            for gap in gaps
+                        ],
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def get_data_gaps(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+    ) -> tuple[DataGap, ...]:
+        clauses = ["instrument_uid = ?"]
+        params: list[object] = [instrument_uid]
+        if from_ts is not None:
+            clauses.append("end_ts > ?")
+            params.append(from_ts)
+        if to_ts is not None:
+            clauses.append("start_ts < ?")
+            params.append(to_ts)
+
+        with self._verified_connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT instrument_uid, start_ts, end_ts, classification
+                FROM data_gaps
+                WHERE {' AND '.join(clauses)}
+                ORDER BY start_ts
+                """,
+                params,
+            ).fetchall()
+        return tuple(
+            DataGap(
+                instrument_uid=str(row[0]),
+                start_ts=row[1].astimezone(UTC),
+                end_ts=row[2].astimezone(UTC),
+                classification=GapClassification(str(row[3])),
+            )
+            for row in rows
+        )
+
+    def get_candle_quality_counts(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime,
+        to_ts: datetime,
+        now: datetime,
+    ) -> CandleQualityCounts:
+        with self._verified_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    count(*),
+                    sum(CASE WHEN NOT is_complete THEN 1 ELSE 0 END),
+                    sum(CASE WHEN ts > ? THEN 1 ELSE 0 END),
+                    sum(
+                        CASE
+                            WHEN low > open OR low > close OR low > high
+                              OR high < open OR high < close OR high < low
+                            THEN 1 ELSE 0
+                        END
+                    ),
+                    sum(CASE WHEN volume < 0 THEN 1 ELSE 0 END),
+                    sum(
+                        CASE WHEN date_trunc('minute', ts) <> ts
+                             THEN 1 ELSE 0 END
+                    )
+                FROM candles_1m
+                WHERE instrument_uid = ?
+                  AND ts >= ?
+                  AND ts < ?
+                """,
+                [now, instrument_uid, from_ts, to_ts],
+            ).fetchone()
+
+        if row is None:
+            raise RepositoryError("candle quality query returned no row")
+        values = [0 if value is None else int(value) for value in row]
+        return CandleQualityCounts(
+            instrument_uid=instrument_uid,
+            row_count=values[0],
+            incomplete_count=values[1],
+            future_count=values[2],
+            invalid_ohlc_count=values[3],
+            negative_volume_count=values[4],
+            off_minute_count=values[5],
+        )
+
+    def save_data_quality_report(self, report: DataQualityReport) -> None:
+        summary = json.dumps(
+            {
+                "universe_id": report.universe_id,
+                "from_ts": report.from_ts.isoformat(),
+                "to_ts": report.to_ts.isoformat(),
+                "calendar_mode": report.calendar_mode,
+                "status": report.status.value,
+                "instruments": [
+                    {
+                        "instrument_uid": item.instrument_uid,
+                        "status": item.status.value,
+                        "row_count": item.stats.row_count,
+                        "min_timestamp": (
+                            None
+                            if item.stats.min_timestamp is None
+                            else item.stats.min_timestamp.isoformat()
+                        ),
+                        "max_timestamp": (
+                            None
+                            if item.stats.max_timestamp is None
+                            else item.stats.max_timestamp.isoformat()
+                        ),
+                        "gap_count": item.gap_count,
+                        "missing_minutes": item.missing_minutes,
+                        "incomplete_count": item.quality.incomplete_count,
+                        "future_count": item.quality.future_count,
+                        "invalid_ohlc_count": item.quality.invalid_ohlc_count,
+                        "negative_volume_count": item.quality.negative_volume_count,
+                        "off_minute_count": item.quality.off_minute_count,
+                    }
+                    for item in report.instruments
+                ],
+            },
+            sort_keys=True,
+        )
+        with self._verified_connection(read_only=False) as connection:
+            connection.execute(
+                """
+                INSERT INTO data_quality_runs(
+                    run_id,
+                    started_at,
+                    completed_at,
+                    status,
+                    summary
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    completed_at = EXCLUDED.completed_at,
+                    status = EXCLUDED.status,
+                    summary = EXCLUDED.summary
+                """,
+                [
+                    report.run_id,
+                    report.started_at,
+                    report.completed_at,
+                    report.status.value,
+                    summary,
+                ],
+            )
 
     @staticmethod
     def _candle_range_filter(
