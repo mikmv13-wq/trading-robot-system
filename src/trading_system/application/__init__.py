@@ -1,4 +1,10 @@
 from trading_system.application.bootstrap import BootstrapDatabasesUseCase, BootstrapResult
+from trading_system.application.data_quality import (
+    DataQualityError,
+    DataQualityRangeError,
+    DataQualityUniverseNotFoundError,
+    ValidateMarketDataUseCase,
+)
 from trading_system.application.historical_backfill import (
     BackfillCheckpointNotFoundError,
     BackfillChunk,
@@ -48,6 +54,9 @@ __all__ = [
     "HistoricalBackfillError",
     "HistoricalBackfillResult",
     "HistoricalBackfillService",
+    "DataQualityError",
+    "DataQualityRangeError",
+    "DataQualityUniverseNotFoundError",
     "DatabaseStatus",
     "GetSystemStatusUseCase",
     "HealthStatus",
@@ -63,6 +72,7 @@ __all__ = [
     "JobTask",
     "SyncInstrumentsUseCase",
     "SystemStatus",
+    "ValidateMarketDataUseCase",
     "TInvestTokenService",
     "TInvestTokenStatus",
     "TokenSource",
