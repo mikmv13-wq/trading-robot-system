@@ -23,6 +23,7 @@ from trading_system.application import (
     JobManager,
     SyncInstrumentsUseCase,
     TInvestTokenService,
+    ValidateMarketDataUseCase,
 )
 from trading_system.config import FileUniverseConfig, Settings
 from trading_system.infrastructure import ThreadJobManager
@@ -40,6 +41,7 @@ class ApplicationServices:
     sync_instruments: SyncInstrumentsUseCase
     tinvest_market_data: TInvestMarketDataClient
     historical_backfill: HistoricalBackfillService
+    validate_market_data: ValidateMarketDataUseCase
     _job_manager: JobManager
 
     def close(self) -> None:
@@ -80,6 +82,7 @@ def build_application_services(
         jobs=JobApplicationService(job_manager),
         tinvest_token=token_service,
         tinvest_market_data=market_data_client,
+        validate_market_data=ValidateMarketDataUseCase(market_repository),
         historical_backfill=HistoricalBackfillService(
             job_manager,
             backfill_use_case,
