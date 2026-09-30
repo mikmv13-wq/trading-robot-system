@@ -1,4 +1,10 @@
 from trading_system.application.bootstrap import BootstrapDatabasesUseCase, BootstrapResult
+from trading_system.application.data_service import (
+    DataApplicationService,
+    DataUniverseNotFoundError,
+    InstrumentDataStatus,
+    UniverseDataStatus,
+)
 from trading_system.application.data_quality import (
     DataQualityError,
     DataQualityRangeError,
@@ -54,6 +60,10 @@ __all__ = [
     "HistoricalBackfillError",
     "HistoricalBackfillResult",
     "HistoricalBackfillService",
+    "DataApplicationService",
+    "DataUniverseNotFoundError",
+    "InstrumentDataStatus",
+    "UniverseDataStatus",
     "DataQualityError",
     "DataQualityRangeError",
     "DataQualityUniverseNotFoundError",
