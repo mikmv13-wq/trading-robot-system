@@ -215,11 +215,18 @@ class InstrumentDataQuality:
     stats: CandleDataStats
     gap_count: int
     missing_minutes: int
+    expected_minutes: int
+    coverage_ratio: float
+    anomaly_reasons: tuple[str, ...]
     quality: CandleQualityCounts
 
     def __post_init__(self) -> None:
         if self.gap_count < 0 or self.missing_minutes < 0:
             raise ValueError("gap counters must be non-negative")
+        if self.expected_minutes < 0:
+            raise ValueError("expected_minutes must be non-negative")
+        if not 0.0 <= self.coverage_ratio <= 1.0:
+            raise ValueError("coverage_ratio must be between 0 and 1")
 
 
 @dataclass(frozen=True, slots=True)
