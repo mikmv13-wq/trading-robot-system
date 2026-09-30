@@ -9,6 +9,7 @@ from trading_system.composition import ApplicationServices, build_application_se
 from trading_system.config import Settings
 from trading_system.observability import configure_logging
 from trading_system.ui import MainWindow
+from trading_system.ui.theme import apply_theme
 
 
 def create_main_window(services: ApplicationServices) -> MainWindow:
@@ -31,6 +32,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     qt_app = QApplication(list(argv) if argv is not None else sys.argv)
     qt_app.setApplicationName("Trading Robot System")
     qt_app.setOrganizationName("Trading Robot System")
+    apply_theme(qt_app)
 
     services = build_application_services(settings)
     qt_app.aboutToQuit.connect(services.close)
