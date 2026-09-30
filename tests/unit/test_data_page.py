@@ -1,9 +1,17 @@
 import os
 from datetime import UTC, datetime
 
-from PySide6.QtWidgets import QApplication, QComboBox, QProgressBar, QPushButton, QTableWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QTableWidget,
+)
 
 from trading_system.application import (
+    DataUniverseNotFoundError,
     InstrumentDataStatus,
     JobSnapshot,
     JobStatus,
@@ -24,8 +32,9 @@ def _qt_app() -> QApplication:
 
 
 class FakeDataService:
-    def __init__(self) -> None:
+    def __init__(self, *, synchronized: bool = True) -> None:
         self.started: list[str] = []
+        self.synchronized = synchronized
         self.snapshot = JobSnapshot(
             job_id="job-1",
             name="Historical 1m backfill: default",
@@ -43,6 +52,10 @@ class FakeDataService:
         return (UniverseDefinition("default", "Default", ("AAA",)),)
 
     def get_status(self, universe_id: str = "default") -> UniverseDataStatus:
+        if not self.synchronized:
+            raise DataUniverseNotFoundError(
+                f"universe {universe_id!r} has not been synchronized"
+            )
         return UniverseDataStatus(
             universe_id=universe_id,
             name="Default",
@@ -157,5 +170,57 @@ def test_data_page_validate_runs_as_background_job() -> None:
         assert button is not None
         button.click()
         assert service.started == ["validate"]
+    finally:
+        page.close()
+
+
+def test_data_page_unsynchronized_universe_is_guided_not_failed() -> None:
+    _qt_app()
+    service = FakeDataService(synchronized=False)
+    page = DataPage(service)  # type: ignore[arg-type]
+
+    try:
+        summary = page.findChild(QLabel, "dataSummary")
+        backfill = page.findChild(QPushButton, "startDataBackfill")
+        resume = page.findChild(QPushButton, "resumeDataBackfill")
+        validate = page.findChild(QPushButton, "validateMarketData")
+
+        assert summary is not None
+        assert "not synchronized yet" in summary.text()
+        assert backfill is not None and backfill.isEnabled()
+        assert resume is not None and not resume.isEnabled()
+        assert validate is not None and not validate.isEnabled()
+    finally:
+        page.close()
+
+
+def test_data_page_backfill_auto_syncs_then_continues() -> None:
+    _qt_app()
+    service = FakeDataService(synchronized=False)
+    page = DataPage(service)  # type: ignore[arg-type]
+
+    try:
+        backfill = page.findChild(QPushButton, "startDataBackfill")
+        assert backfill is not None
+
+        backfill.click()
+        assert service.started == ["sync"]
+
+        service.synchronized = True
+        service.snapshot = JobSnapshot(
+            job_id="job-1",
+            name="Instrument sync: default",
+            status=JobStatus.COMPLETED,
+            progress=1.0,
+            message="Synchronized 1 instruments",
+            result=None,
+            error=None,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            started_at=datetime(2026, 1, 1, tzinfo=UTC),
+            finished_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
+        )
+        page._poll_job()
+
+        assert service.started == ["sync", "backfill"]
     finally:
         page.close()
