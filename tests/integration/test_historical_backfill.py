@@ -12,7 +12,7 @@ from trading_system.application import (
     JobStatus,
 )
 from trading_system.config import Settings
-from trading_system.domain import Candle1m, Instrument, Universe
+from trading_system.domain import Candle1m, IngestionStatus, Instrument, Universe
 from trading_system.infrastructure import ThreadJobManager
 
 
@@ -168,3 +168,84 @@ def test_background_backfill_can_be_cancelled(tmp_path: Path) -> None:
         assert len(market_data.calls) < 20
     finally:
         manager.shutdown(wait=True, cancel_running=True)
+
+
+class FailOnceMarketDataClient(FakeMarketDataClient):
+    def __init__(self, fail_on_call: int) -> None:
+        super().__init__()
+        self._fail_on_call = fail_on_call
+
+    def get_candles(
+        self,
+        instrument_uid: str,
+        from_ts: datetime,
+        to_ts: datetime,
+    ) -> tuple[Candle1m, ...]:
+        next_call = len(self.calls) + 1
+        if next_call == self._fail_on_call:
+            self.calls.append((instrument_uid, from_ts, to_ts))
+            raise RuntimeError("temporary broker failure")
+        return super().get_candles(instrument_uid, from_ts, to_ts)
+
+
+def test_backfill_resume_continues_from_last_completed_chunk(tmp_path: Path) -> None:
+    repository = _bootstrap(tmp_path)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=3)
+    failing_client = FailOnceMarketDataClient(fail_on_call=2)
+    use_case = BackfillHistoricalCandlesUseCase(failing_client, repository)
+
+    try:
+        use_case.execute("default", from_ts=start, to_ts=end)
+    except RuntimeError as exc:
+        assert "temporary broker failure" in str(exc)
+    else:
+        raise AssertionError("initial backfill must fail")
+
+    checkpoint = repository.get_ingestion_checkpoint("uid-a", "1m")
+    assert checkpoint is not None
+    assert checkpoint.status is IngestionStatus.FAILED
+    assert checkpoint.completed_until == start + timedelta(days=1)
+    assert checkpoint.last_error == "RuntimeError: temporary broker failure"
+
+    resumed_client = FakeMarketDataClient()
+    resumed = BackfillHistoricalCandlesUseCase(resumed_client, repository)
+    result = resumed.execute("default", resume=True)
+
+    uid_a_calls = [call for call in resumed_client.calls if call[0] == "uid-a"]
+    uid_b_calls = [call for call in resumed_client.calls if call[0] == "uid-b"]
+    assert uid_a_calls == [
+        ("uid-a", start + timedelta(days=1), start + timedelta(days=2)),
+        ("uid-a", start + timedelta(days=2), end),
+    ]
+    assert len(uid_b_calls) == 3
+    assert result.total_requests == 5
+
+    checkpoint = repository.get_ingestion_checkpoint("uid-a", "1m")
+    assert checkpoint is not None
+    assert checkpoint.status is IngestionStatus.COMPLETED
+    assert checkpoint.completed_until == end
+    assert checkpoint.last_error is None
+
+
+def test_resume_skips_completed_instrument(tmp_path: Path) -> None:
+    repository = _bootstrap(tmp_path)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=2)
+    initial_client = FakeMarketDataClient()
+    use_case = BackfillHistoricalCandlesUseCase(initial_client, repository)
+    use_case.execute("default", from_ts=start, to_ts=end)
+
+    resumed_client = FakeMarketDataClient()
+    result = BackfillHistoricalCandlesUseCase(
+        resumed_client,
+        repository,
+    ).execute("default", resume=True)
+
+    assert resumed_client.calls == []
+    assert result.total_requests == 0
+    assert all(
+        repository.get_ingestion_checkpoint(uid, "1m").status
+        is IngestionStatus.COMPLETED
+        for uid in ("uid-a", "uid-b")
+    )
