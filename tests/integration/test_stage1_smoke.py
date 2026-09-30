@@ -7,10 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from trading_system.adapters.duckdb import (
-    DuckDBBootstrapper,
-    DuckDBMarketRepository,
-)
+from trading_system.adapters.duckdb import DuckDBBootstrapper, DuckDBMarketRepository
 from trading_system.application import (
     BackfillHistoricalCandlesUseCase,
     BootstrapDatabasesUseCase,
@@ -18,12 +15,7 @@ from trading_system.application import (
     ValidateMarketDataUseCase,
 )
 from trading_system.config import FileUniverseConfig, Settings
-from trading_system.domain import (
-    Candle1m,
-    DataQualityStatus,
-    IngestionStatus,
-    Instrument,
-)
+from trading_system.domain import Candle1m, DataQualityStatus, IngestionStatus, Instrument
 
 
 TICKERS = tuple(f"STK{index:02d}" for index in range(10))
