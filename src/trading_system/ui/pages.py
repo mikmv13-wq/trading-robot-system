@@ -72,9 +72,9 @@ class PageHeader(QWidget):
         copy.addWidget(subtitle_label)
         layout.addLayout(copy, 1)
 
-        self.actions = QHBoxLayout()
-        self.actions.setSpacing(8)
-        layout.addLayout(self.actions)
+        self.action_layout = QHBoxLayout()
+        self.action_layout.setSpacing(8)
+        layout.addLayout(self.action_layout)
 
 
 class PlaceholderPage(QWidget):
@@ -143,7 +143,7 @@ class DashboardPage(QWidget):
             variant="ghost",
         )
         refresh_button.clicked.connect(self.refresh_status)
-        header.actions.addWidget(refresh_button)
+        header.action_layout.addWidget(refresh_button)
         layout.addWidget(header)
 
         cards = QGridLayout()
@@ -372,7 +372,7 @@ class DataPage(QWidget):
             variant="ghost",
         )
         self._refresh_button.clicked.connect(self.refresh_status)
-        header.actions.addWidget(self._refresh_button)
+        header.action_layout.addWidget(self._refresh_button)
         layout.addWidget(header)
 
         controls_card = SectionCard(
