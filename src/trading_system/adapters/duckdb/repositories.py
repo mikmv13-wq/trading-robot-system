@@ -513,6 +513,35 @@ class DuckDBMarketRepository(DuckDBRepository):
             updated_at=row[7].astimezone(UTC),
         )
 
+    def count_observed_market_minutes(
+        self,
+        universe_id: str,
+        *,
+        from_ts: datetime,
+        to_ts: datetime,
+    ) -> int:
+        self._validate_optional_utc(from_ts, "from_ts")
+        self._validate_optional_utc(to_ts, "to_ts")
+        if from_ts >= to_ts:
+            raise ValueError("from_ts must be earlier than to_ts")
+
+        with self._verified_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT count(DISTINCT c.ts)
+                FROM candles_1m AS c
+                JOIN universe_instruments AS ui
+                  ON ui.instrument_uid = c.instrument_uid
+                WHERE ui.universe_id = ?
+                  AND c.ts >= ?
+                  AND c.ts < ?
+                """,
+                [universe_id, from_ts, to_ts],
+            ).fetchone()
+        if row is None:
+            raise RepositoryError("observed market minutes query returned no row")
+        return int(row[0])
+
     def scan_data_gaps(
         self,
         universe_id: str,
@@ -734,6 +763,9 @@ class DuckDBMarketRepository(DuckDBRepository):
                         ),
                         "gap_count": item.gap_count,
                         "missing_minutes": item.missing_minutes,
+                        "expected_minutes": item.expected_minutes,
+                        "coverage_ratio": item.coverage_ratio,
+                        "anomaly_reasons": list(item.anomaly_reasons),
                         "incomplete_count": item.quality.incomplete_count,
                         "future_count": item.quality.future_count,
                         "invalid_ohlc_count": item.quality.invalid_ohlc_count,
