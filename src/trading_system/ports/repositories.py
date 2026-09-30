@@ -73,6 +73,14 @@ class MarketRepository(Repository, Protocol):
         interval: str,
     ) -> IngestionCheckpoint | None: ...
 
+    def count_observed_market_minutes(
+        self,
+        universe_id: str,
+        *,
+        from_ts: datetime,
+        to_ts: datetime,
+    ) -> int: ...
+
     def scan_data_gaps(
         self,
         universe_id: str,
