@@ -4,6 +4,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
@@ -306,7 +307,7 @@ class DuckDBMarketRepository(DuckDBRepository):
         )
 
     @staticmethod
-    def _instrument_from_row(row: tuple[object, ...]) -> Instrument:
+    def _instrument_from_row(row: tuple[Any, ...]) -> Instrument:
         return Instrument(
             instrument_uid=str(row[0]),
             ticker=str(row[1]),
