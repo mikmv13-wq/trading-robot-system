@@ -3,9 +3,11 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QProgressBar,
     QPushButton,
     QTableWidget,
@@ -19,6 +21,9 @@ from trading_system.application import (
     HealthStatus,
     JobApplicationService,
     JobStatus,
+    TInvestTokenService,
+    TokenSource,
+    TokenStorageError,
 )
 
 
@@ -223,3 +228,121 @@ class DashboardPage(QWidget):
             self._job_timer.stop()
             self._run_job_button.setEnabled(True)
             self._cancel_job_button.setEnabled(False)
+
+
+class SettingsPage(QWidget):
+    def __init__(
+        self,
+        tinvest_token: TInvestTokenService | None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("page-settings")
+        self._tinvest_token = tinvest_token
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+        layout.addWidget(
+            PageHeader(
+                "Settings",
+                "Локальные настройки и безопасное хранение T-Invest token.",
+            )
+        )
+
+        token_title = QLabel("T-Invest token")
+        token_title.setStyleSheet("font-size: 16px; font-weight: 600;")
+        layout.addWidget(token_title)
+
+        self._token_status = QLabel()
+        self._token_status.setObjectName("tinvestTokenStatus")
+        layout.addWidget(self._token_status)
+
+        self._keychain_status = QLabel()
+        self._keychain_status.setObjectName("keychainStatus")
+        layout.addWidget(self._keychain_status)
+
+        self._token_input = QLineEdit()
+        self._token_input.setObjectName("tinvestTokenInput")
+        self._token_input.setPlaceholderText("Введите token")
+        self._token_input.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self._token_input)
+
+        self._persist_checkbox = QCheckBox("Сохранить в OS keychain")
+        self._persist_checkbox.setObjectName("persistToken")
+        self._persist_checkbox.setChecked(True)
+        layout.addWidget(self._persist_checkbox)
+
+        controls = QHBoxLayout()
+        self._save_button = QPushButton("Сохранить")
+        self._save_button.setObjectName("saveTinInvestToken")
+        self._save_button.clicked.connect(self._save_token)
+        controls.addWidget(self._save_button)
+
+        self._clear_button = QPushButton("Удалить")
+        self._clear_button.setObjectName("clearTinInvestToken")
+        self._clear_button.clicked.connect(self._clear_token)
+        controls.addWidget(self._clear_button)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        self._token_message = QLabel()
+        self._token_message.setObjectName("tinvestTokenMessage")
+        self._token_message.setWordWrap(True)
+        layout.addWidget(self._token_message)
+        layout.addStretch(1)
+
+        enabled = self._tinvest_token is not None
+        self._token_input.setEnabled(enabled)
+        self._persist_checkbox.setEnabled(enabled)
+        self._save_button.setEnabled(enabled)
+        self._clear_button.setEnabled(enabled)
+        self.refresh_token_status()
+
+    def refresh_token_status(self) -> None:
+        if self._tinvest_token is None:
+            self._token_status.setText("Token: Unavailable")
+            self._keychain_status.setText("OS keychain: Unavailable")
+            return
+
+        status = self._tinvest_token.status()
+        configured = "Configured" if status.configured else "Not configured"
+        self._token_status.setText(f"Token: {configured} ({status.source.value})")
+        keychain = "Available" if status.keychain_available else "Unavailable"
+        self._keychain_status.setText(f"OS keychain: {keychain}")
+        if status.error:
+            self._keychain_status.setToolTip(status.error)
+        else:
+            self._keychain_status.setToolTip("")
+
+    def _save_token(self) -> None:
+        if self._tinvest_token is None:
+            return
+        try:
+            self._tinvest_token.set_token(
+                self._token_input.text(),
+                persist=self._persist_checkbox.isChecked(),
+            )
+        except (TokenStorageError, ValueError) as exc:
+            self._token_message.setText(str(exc))
+            self.refresh_token_status()
+            return
+
+        self._token_input.clear()
+        source = TokenSource.KEYCHAIN if self._persist_checkbox.isChecked() else TokenSource.SESSION
+        self._token_message.setText(f"Token configured for {source.value.lower()}.")
+        self.refresh_token_status()
+
+    def _clear_token(self) -> None:
+        if self._tinvest_token is None:
+            return
+        try:
+            self._tinvest_token.clear()
+        except TokenStorageError as exc:
+            self._token_message.setText(str(exc))
+            self.refresh_token_status()
+            return
+
+        self._token_input.clear()
+        self._token_message.setText("Token removed.")
+        self.refresh_token_status()

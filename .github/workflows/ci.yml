@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check .
+      - name: Mypy
+        run: mypy
+
+  tests:
+    name: Unit and integration tests
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Unit tests
+        run: pytest tests/unit
+      - name: Integration tests
+        run: pytest tests/integration
+      - name: GUI smoke
+        run: pytest tests/unit/test_desktop_shell.py
+
+  stage0-smoke:
+    name: Stage 0 bootstrap smoke
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Bootstrap twice and verify status
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_dir="$(mktemp -d)"
+          trader bootstrap --data-dir "$runtime_dir/data" --sql-dir sql
+          second="$(trader bootstrap --data-dir "$runtime_dir/data" --sql-dir sql)"
+          echo "$second"
+          grep -q "market: applied migrations: none" <<< "$second"
+          grep -q "research: applied migrations: none" <<< "$second"
+          grep -q "live: applied migrations: none" <<< "$second"
+          trader db status --data-dir "$runtime_dir/data"
+          test -f "$runtime_dir/data/market.duckdb"
+          test -f "$runtime_dir/data/research.duckdb"
+          test -f "$runtime_dir/data/live.duckdb"
