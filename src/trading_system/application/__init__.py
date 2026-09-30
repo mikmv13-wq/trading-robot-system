@@ -1,5 +1,6 @@
 from trading_system.application.bootstrap import BootstrapDatabasesUseCase, BootstrapResult
 from trading_system.application.historical_backfill import (
+    BackfillCheckpointNotFoundError,
     BackfillChunk,
     BackfillHistoricalCandlesUseCase,
     BackfillUniverseNotFoundError,
@@ -39,6 +40,7 @@ from trading_system.application.tinvest_token import (
 __all__ = [
     "BootstrapDatabasesUseCase",
     "BootstrapResult",
+    "BackfillCheckpointNotFoundError",
     "BackfillChunk",
     "BackfillHistoricalCandlesUseCase",
     "BackfillUniverseNotFoundError",
