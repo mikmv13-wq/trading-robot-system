@@ -25,6 +25,14 @@ class OrderSide(StrEnum):
     SELL = "SELL"
 
 
+class IngestionStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    COMPLETED = "COMPLETED"
+
+
 @dataclass(frozen=True, slots=True)
 class Instrument:
     instrument_uid: str
@@ -119,6 +127,34 @@ class CandleDataStats:
         _require_utc(self.max_timestamp, "max_timestamp")
         if self.min_timestamp > self.max_timestamp:
             raise ValueError("min_timestamp must not be after max_timestamp")
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionCheckpoint:
+    instrument_uid: str
+    interval: str
+    requested_from: datetime
+    requested_to: datetime
+    completed_until: datetime | None
+    status: IngestionStatus
+    last_error: str | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.instrument_uid.strip():
+            raise ValueError("instrument_uid must not be empty")
+        if not self.interval.strip():
+            raise ValueError("interval must not be empty")
+        _require_utc(self.requested_from, "requested_from")
+        _require_utc(self.requested_to, "requested_to")
+        if self.requested_from >= self.requested_to:
+            raise ValueError("requested_from must be earlier than requested_to")
+        if self.completed_until is not None:
+            _require_utc(self.completed_until, "completed_until")
+            if not self.requested_from <= self.completed_until <= self.requested_to:
+                raise ValueError("completed_until must be within requested range")
+        if self.updated_at is not None:
+            _require_utc(self.updated_at, "updated_at")
 
 
 @dataclass(frozen=True, slots=True)
