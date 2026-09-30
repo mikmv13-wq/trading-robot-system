@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from datetime import UTC
 from pathlib import Path
 
 import duckdb
 
 from trading_system.adapters.duckdb.connection import DuckDBConnectionFactory
+from trading_system.domain import Candle1m, Instrument, Universe
 
 
 class RepositoryError(RuntimeError):
@@ -18,12 +20,7 @@ class DatabaseIdentityError(RepositoryError):
 
 
 class DuckDBRepository:
-    """Shared read-side foundation for the three DuckDB repositories.
-
-    Repository methods intentionally use short-lived read-only connections.
-    Write ownership and transaction boundaries are introduced by the use cases
-    that need them in later stages.
-    """
+    """Shared foundation for the three DuckDB repositories."""
 
     def __init__(
         self,
@@ -57,9 +54,16 @@ class DuckDBRepository:
             return self._read_metadata(connection)
 
     @contextmanager
-    def _verified_connection(self) -> Iterator[duckdb.DuckDBPyConnection]:
+    def _verified_connection(
+        self,
+        *,
+        read_only: bool = True,
+    ) -> Iterator[duckdb.DuckDBPyConnection]:
         try:
-            with self._connection_factory.open(self._path, read_only=True) as connection:
+            with self._connection_factory.open(
+                self._path,
+                read_only=read_only,
+            ) as connection:
                 metadata = self._read_metadata(connection)
                 actual_kind = metadata.get("database_kind")
                 if actual_kind != self._expected_kind:
@@ -98,6 +102,222 @@ class DuckDBMarketRepository(DuckDBRepository):
         connection_factory: DuckDBConnectionFactory | None = None,
     ) -> None:
         super().__init__(path, "market", connection_factory)
+
+    def upsert_instrument(self, instrument: Instrument) -> None:
+        with self._verified_connection(read_only=False) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO instruments(
+                    instrument_uid,
+                    ticker,
+                    lot_size,
+                    name,
+                    currency,
+                    figi,
+                    exchange,
+                    instrument_type,
+                    active,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                [
+                    instrument.instrument_uid,
+                    instrument.ticker,
+                    instrument.lot_size,
+                    instrument.name,
+                    instrument.currency,
+                    instrument.figi,
+                    instrument.exchange,
+                    instrument.instrument_type,
+                    instrument.active,
+                ],
+            )
+
+    def get_instrument(self, instrument_uid: str) -> Instrument | None:
+        with self._verified_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    instrument_uid,
+                    ticker,
+                    lot_size,
+                    name,
+                    currency,
+                    figi,
+                    exchange,
+                    instrument_type,
+                    active
+                FROM instruments
+                WHERE instrument_uid = ?
+                """,
+                [instrument_uid],
+            ).fetchone()
+
+        if row is None:
+            return None
+        return self._instrument_from_row(row)
+
+    def list_instruments(self) -> tuple[Instrument, ...]:
+        with self._verified_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    instrument_uid,
+                    ticker,
+                    lot_size,
+                    name,
+                    currency,
+                    figi,
+                    exchange,
+                    instrument_type,
+                    active
+                FROM instruments
+                ORDER BY ticker, instrument_uid
+                """
+            ).fetchall()
+        return tuple(self._instrument_from_row(row) for row in rows)
+
+    def replace_universe(self, universe: Universe) -> None:
+        with self._verified_connection(read_only=False) as connection:
+            try:
+                connection.execute("BEGIN TRANSACTION")
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO universes(
+                        universe_id,
+                        name,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        ?,
+                        ?,
+                        COALESCE(
+                            (SELECT created_at FROM universes WHERE universe_id = ?),
+                            CURRENT_TIMESTAMP
+                        ),
+                        CURRENT_TIMESTAMP
+                    )
+                    """,
+                    [universe.universe_id, universe.name, universe.universe_id],
+                )
+                connection.execute(
+                    "DELETE FROM universe_instruments WHERE universe_id = ?",
+                    [universe.universe_id],
+                )
+                for instrument_uid in universe.instrument_uids:
+                    connection.execute(
+                        """
+                        INSERT INTO universe_instruments(universe_id, instrument_uid)
+                        VALUES (?, ?)
+                        """,
+                        [universe.universe_id, instrument_uid],
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def get_universe(self, universe_id: str) -> Universe | None:
+        with self._verified_connection() as connection:
+            row = connection.execute(
+                "SELECT universe_id, name FROM universes WHERE universe_id = ?",
+                [universe_id],
+            ).fetchone()
+            if row is None:
+                return None
+            member_rows = connection.execute(
+                """
+                SELECT instrument_uid
+                FROM universe_instruments
+                WHERE universe_id = ?
+                ORDER BY instrument_uid
+                """,
+                [universe_id],
+            ).fetchall()
+
+        return Universe(
+            universe_id=str(row[0]),
+            name=str(row[1]),
+            instrument_uids=tuple(str(member[0]) for member in member_rows),
+        )
+
+    def insert_candle(self, candle: Candle1m) -> None:
+        with self._verified_connection(read_only=False) as connection:
+            connection.execute(
+                """
+                INSERT INTO candles_1m(
+                    instrument_uid,
+                    ts,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume,
+                    is_complete
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    candle.instrument_uid,
+                    candle.ts,
+                    candle.open,
+                    candle.high,
+                    candle.low,
+                    candle.close,
+                    candle.volume,
+                    candle.is_complete,
+                ],
+            )
+
+    def list_candles(self, instrument_uid: str) -> tuple[Candle1m, ...]:
+        with self._verified_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    instrument_uid,
+                    ts,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume,
+                    is_complete
+                FROM candles_1m
+                WHERE instrument_uid = ?
+                ORDER BY ts
+                """,
+                [instrument_uid],
+            ).fetchall()
+
+        return tuple(
+            Candle1m(
+                instrument_uid=str(row[0]),
+                ts=row[1].astimezone(UTC),
+                open=row[2],
+                high=row[3],
+                low=row[4],
+                close=row[5],
+                volume=int(row[6]),
+                is_complete=bool(row[7]),
+            )
+            for row in rows
+        )
+
+    @staticmethod
+    def _instrument_from_row(row: tuple[object, ...]) -> Instrument:
+        return Instrument(
+            instrument_uid=str(row[0]),
+            ticker=str(row[1]),
+            lot_size=int(row[2]),
+            name=None if row[3] is None else str(row[3]),
+            currency=None if row[4] is None else str(row[4]),
+            figi=None if row[5] is None else str(row[5]),
+            exchange=None if row[6] is None else str(row[6]),
+            instrument_type=None if row[7] is None else str(row[7]),
+            active=bool(row[8]),
+        )
 
 
 class DuckDBResearchRepository(DuckDBRepository):
