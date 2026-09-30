@@ -5,6 +5,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -28,25 +30,51 @@ from trading_system.application import (
     TokenSource,
     TokenStorageError,
 )
+from trading_system.ui.widgets import MetricCard, SectionCard, StatusBadge
+
+
+def _button(text: str, *, object_name: str, variant: str = "ghost") -> QPushButton:
+    button = QPushButton(text)
+    button.setObjectName(object_name)
+    button.setProperty("variant", variant)
+    return button
+
+
+def _job_tone(status: JobStatus | str) -> str:
+    value = status.value if isinstance(status, JobStatus) else str(status)
+    if value == JobStatus.COMPLETED.value:
+        return "success"
+    if value in {JobStatus.FAILED.value, JobStatus.CANCELLED.value}:
+        return "danger"
+    if value in {JobStatus.RUNNING.value, JobStatus.PENDING.value}:
+        return "info"
+    return "muted"
 
 
 class PageHeader(QWidget):
     def __init__(self, title: str, subtitle: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 8)
-        layout.setSpacing(4)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 4)
+        layout.setSpacing(16)
+
+        copy = QVBoxLayout()
+        copy.setSpacing(4)
 
         title_label = QLabel(title)
         title_label.setObjectName("pageTitle")
-        title_label.setStyleSheet("font-size: 24px; font-weight: 600;")
 
         subtitle_label = QLabel(subtitle)
         subtitle_label.setObjectName("pageSubtitle")
         subtitle_label.setWordWrap(True)
 
-        layout.addWidget(title_label)
-        layout.addWidget(subtitle_label)
+        copy.addWidget(title_label)
+        copy.addWidget(subtitle_label)
+        layout.addLayout(copy, 1)
+
+        self.actions = QHBoxLayout()
+        self.actions.setSpacing(8)
+        layout.addLayout(self.actions)
 
 
 class PlaceholderPage(QWidget):
@@ -62,15 +90,30 @@ class PlaceholderPage(QWidget):
         self.setObjectName(f"page-{page_key}")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
+        layout.setContentsMargins(28, 26, 28, 26)
+        layout.setSpacing(18)
         layout.addWidget(PageHeader(title, subtitle))
 
-        message = QLabel("Экран подготовлен. Функциональность будет добавлена на следующих этапах.")
+        empty = QFrame()
+        empty.setObjectName("emptyState")
+        empty_layout = QVBoxLayout(empty)
+        empty_layout.setContentsMargins(28, 28, 28, 28)
+        empty_layout.setSpacing(8)
+
+        heading = QLabel("Workspace is ready")
+        heading.setObjectName("sectionTitle")
+        empty_layout.addWidget(heading)
+
+        message = QLabel(
+            "Экран уже включён в единую навигацию. "
+            "Функциональность будет подключаться на следующих этапах разработки."
+        )
+        message.setObjectName("mutedText")
         message.setWordWrap(True)
-        message.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(message)
-        layout.addStretch(1)
+        empty_layout.addWidget(message)
+        empty_layout.addStretch(1)
+
+        layout.addWidget(empty, 1)
 
 
 class DashboardPage(QWidget):
@@ -87,87 +130,130 @@ class DashboardPage(QWidget):
         self._current_job_id: str | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
+        layout.setContentsMargins(28, 26, 28, 26)
+        layout.setSpacing(18)
 
-        layout.addWidget(
-            PageHeader(
-                "Dashboard",
-                "Состояние desktop-приложения и локальной инфраструктуры.",
-            )
+        header = PageHeader(
+            "Dashboard",
+            "Состояние desktop-приложения, локального хранилища и фоновых задач.",
         )
-
-        mode_row = QHBoxLayout()
-        mode_caption = QLabel("Режим:")
-        mode_value = QLabel("RESEARCH")
-        mode_value.setObjectName("applicationMode")
-        mode_value.setStyleSheet("font-weight: 600;")
-        mode_row.addWidget(mode_caption)
-        mode_row.addWidget(mode_value)
-        mode_row.addStretch(1)
-        layout.addLayout(mode_row)
-
-        database_title_row = QHBoxLayout()
-        database_title = QLabel("DuckDB")
-        database_title.setStyleSheet("font-size: 16px; font-weight: 600;")
-        database_title_row.addWidget(database_title)
-        database_title_row.addStretch(1)
-
-        refresh_button = QPushButton("Обновить")
-        refresh_button.setObjectName("refreshDatabaseStatus")
+        refresh_button = _button(
+            "↻  Refresh",
+            object_name="refreshDatabaseStatus",
+            variant="ghost",
+        )
         refresh_button.clicked.connect(self.refresh_status)
-        database_title_row.addWidget(refresh_button)
-        layout.addLayout(database_title_row)
+        header.actions.addWidget(refresh_button)
+        layout.addWidget(header)
 
-        self._database_table = QTableWidget(0, 4)
+        cards = QGridLayout()
+        cards.setHorizontalSpacing(14)
+        cards.setVerticalSpacing(14)
+
+        self._database_cards: dict[str, MetricCard] = {}
+        for column, database_name in enumerate(("market", "research", "live")):
+            card = MetricCard(
+                f"{database_name.capitalize()} DB",
+                "Checking…",
+                subtitle="DuckDB local storage",
+                status="CHECKING",
+                tone="info",
+                object_name=f"database-{database_name}",
+            )
+            card.setMinimumHeight(132)
+            cards.addWidget(card, 0, column)
+            self._database_cards[database_name] = card
+
+        app_card = MetricCard(
+            "Application mode",
+            "RESEARCH",
+            subtitle="Safe local research workspace",
+            status="ACTIVE",
+            tone="success",
+            object_name="application-mode",
+        )
+        app_card.setMinimumHeight(132)
+        cards.addWidget(app_card, 0, 3)
+        cards.setColumnStretch(0, 1)
+        cards.setColumnStretch(1, 1)
+        cards.setColumnStretch(2, 1)
+        cards.setColumnStretch(3, 1)
+        layout.addLayout(cards)
+
+        self._database_table = QTableWidget(0, 4, self)
         self._database_table.setObjectName("databaseStatusTable")
         self._database_table.setHorizontalHeaderLabels(
             ["Database", "Status", "Schema", "Baseline"]
         )
-        self._database_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._database_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self._database_table.verticalHeader().setVisible(False)
+        self._database_table.setVisible(False)
 
-        header = self._database_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-
-        layout.addWidget(self._database_table)
-
-        job_title = QLabel("Background jobs")
-        job_title.setStyleSheet("font-size: 16px; font-weight: 600;")
-        layout.addWidget(job_title)
+        job_card = SectionCard(
+            "Active job",
+            subtitle="Длительные операции выполняются в фоне и не блокируют интерфейс.",
+        )
 
         job_controls = QHBoxLayout()
-        self._run_job_button = QPushButton("Run test job")
-        self._run_job_button.setObjectName("runTestJob")
+        self._run_job_button = _button(
+            "Run test job",
+            object_name="runTestJob",
+            variant="primary",
+        )
         self._run_job_button.clicked.connect(self._start_test_job)
         job_controls.addWidget(self._run_job_button)
 
-        self._cancel_job_button = QPushButton("Cancel")
-        self._cancel_job_button.setObjectName("cancelTestJob")
+        self._cancel_job_button = _button(
+            "Cancel",
+            object_name="cancelTestJob",
+            variant="danger",
+        )
         self._cancel_job_button.setEnabled(False)
         self._cancel_job_button.clicked.connect(self._cancel_test_job)
         job_controls.addWidget(self._cancel_job_button)
         job_controls.addStretch(1)
-        layout.addLayout(job_controls)
 
-        self._job_status = QLabel("IDLE")
+        self._job_status = StatusBadge("IDLE", tone="muted")
         self._job_status.setObjectName("jobStatus")
-        layout.addWidget(self._job_status)
+        job_controls.addWidget(self._job_status)
+        job_card.content.addLayout(job_controls)
 
         self._job_progress = QProgressBar()
         self._job_progress.setObjectName("jobProgress")
         self._job_progress.setRange(0, 100)
         self._job_progress.setValue(0)
-        layout.addWidget(self._job_progress)
+        job_card.content.addWidget(self._job_progress)
 
         self._job_message = QLabel("No background job running.")
         self._job_message.setObjectName("jobMessage")
         self._job_message.setWordWrap(True)
-        layout.addWidget(self._job_message)
+        job_card.content.addWidget(self._job_message)
+        layout.addWidget(job_card)
+
+        overview = SectionCard(
+            "Workspace",
+            subtitle="Research-first desktop workflow without a web layer.",
+        )
+        overview_grid = QGridLayout()
+        overview_grid.setHorizontalSpacing(18)
+        overview_grid.setVerticalSpacing(8)
+
+        for row, (title, text) in enumerate(
+            (
+                ("Data", "Universe, historical 1m candles and data quality."),
+                ("Backtest", "Strategy simulation and trade-level analysis."),
+                ("Optimization", "Stable parameter search across folds and instruments."),
+                ("Validation", "Frozen candidate holdout and stress validation."),
+            )
+        ):
+            title_label = QLabel(title)
+            title_label.setObjectName("metricTitle")
+            text_label = QLabel(text)
+            text_label.setObjectName("mutedText")
+            text_label.setWordWrap(True)
+            overview_grid.addWidget(title_label, row, 0)
+            overview_grid.addWidget(text_label, row, 1)
+        overview_grid.setColumnStretch(1, 1)
+        overview.content.addLayout(overview_grid)
+        layout.addWidget(overview)
         layout.addStretch(1)
 
         self._job_timer = QTimer(self)
@@ -196,12 +282,31 @@ class DashboardPage(QWidget):
                     item.setToolTip(database.error)
                 self._database_table.setItem(row, column, item)
 
+            card = self._database_cards.get(database.name)
+            if card is None:
+                continue
+            if database.status is HealthStatus.ERROR:
+                card.set_metric(
+                    value="Unavailable",
+                    subtitle=f"Schema {schema_text} · {baseline}",
+                    status="ERROR",
+                    tone="danger",
+                    tooltip=database.error or "",
+                )
+            else:
+                card.set_metric(
+                    value=f"Schema v{schema_text}",
+                    subtitle=f"{baseline} · local DuckDB",
+                    status=status_text,
+                    tone="success",
+                )
+
     def _start_test_job(self) -> None:
         self._current_job_id = self._jobs.start_test_job()
         self._run_job_button.setEnabled(False)
         self._cancel_job_button.setEnabled(True)
         self._job_progress.setValue(0)
-        self._job_status.setText(JobStatus.PENDING.value)
+        self._job_status.set_status(JobStatus.PENDING.value, tone="info")
         self._job_message.setText("Test job submitted.")
         self._job_timer.start()
         self._poll_job()
@@ -217,7 +322,10 @@ class DashboardPage(QWidget):
             return
 
         snapshot = self._jobs.get(self._current_job_id)
-        self._job_status.setText(snapshot.status.value)
+        self._job_status.set_status(
+            snapshot.status.value,
+            tone=_job_tone(snapshot.status),
+        )
         self._job_progress.setValue(round(snapshot.progress * 100))
 
         message = snapshot.message
@@ -251,75 +359,147 @@ class DataPage(QWidget):
         self._has_data = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-        layout.addWidget(
-            PageHeader(
-                "Data",
-                "Universe, исторические 1m данные, coverage и контроль качества.",
-            )
-        )
+        layout.setContentsMargins(28, 26, 28, 26)
+        layout.setSpacing(16)
 
+        header = PageHeader(
+            "Market Data",
+            "Universe, исторические 1m данные, coverage и контроль качества.",
+        )
+        self._refresh_button = _button(
+            "↻  Refresh",
+            object_name="refreshDataStatus",
+            variant="ghost",
+        )
+        self._refresh_button.clicked.connect(self.refresh_status)
+        header.actions.addWidget(self._refresh_button)
+        layout.addWidget(header)
+
+        controls_card = SectionCard(
+            "Data controls",
+            subtitle="Управление universe и исторической загрузкой T-Invest.",
+        )
         universe_row = QHBoxLayout()
-        universe_row.addWidget(QLabel("Universe:"))
+        universe_label = QLabel("Universe")
+        universe_label.setObjectName("metricTitle")
+        universe_row.addWidget(universe_label)
+
         self._universe = QComboBox()
         self._universe.setObjectName("dataUniverse")
+        self._universe.setMinimumWidth(230)
         self._universe.currentIndexChanged.connect(self.refresh_status)
-        universe_row.addWidget(self._universe, 1)
+        universe_row.addWidget(self._universe)
 
-        self._sync_button = QPushButton("Sync instruments")
-        self._sync_button.setObjectName("syncInstruments")
+        universe_row.addStretch(1)
+
+        self._sync_button = _button(
+            "Sync instruments",
+            object_name="syncInstruments",
+            variant="ghost",
+        )
         self._sync_button.clicked.connect(self._start_sync)
         universe_row.addWidget(self._sync_button)
 
-        self._refresh_button = QPushButton("Refresh")
-        self._refresh_button.setObjectName("refreshDataStatus")
-        self._refresh_button.clicked.connect(self.refresh_status)
-        universe_row.addWidget(self._refresh_button)
-        layout.addLayout(universe_row)
-
-        controls = QHBoxLayout()
-        self._backfill_button = QPushButton("Backfill 5 years")
-        self._backfill_button.setObjectName("startDataBackfill")
+        self._backfill_button = _button(
+            "Backfill 5 years",
+            object_name="startDataBackfill",
+            variant="primary",
+        )
         self._backfill_button.clicked.connect(self._start_backfill)
-        controls.addWidget(self._backfill_button)
+        universe_row.addWidget(self._backfill_button)
 
-        self._resume_button = QPushButton("Resume")
-        self._resume_button.setObjectName("resumeDataBackfill")
+        self._resume_button = _button(
+            "Resume",
+            object_name="resumeDataBackfill",
+            variant="ghost",
+        )
         self._resume_button.clicked.connect(self._resume_backfill)
-        controls.addWidget(self._resume_button)
+        universe_row.addWidget(self._resume_button)
 
-        self._cancel_button = QPushButton("Cancel")
-        self._cancel_button.setObjectName("cancelDataJob")
+        self._validate_button = _button(
+            "Validate",
+            object_name="validateMarketData",
+            variant="ghost",
+        )
+        self._validate_button.clicked.connect(self._start_validation)
+        universe_row.addWidget(self._validate_button)
+
+        self._cancel_button = _button(
+            "Cancel",
+            object_name="cancelDataJob",
+            variant="danger",
+        )
         self._cancel_button.setEnabled(False)
         self._cancel_button.clicked.connect(self._cancel_job)
-        controls.addWidget(self._cancel_button)
+        universe_row.addWidget(self._cancel_button)
 
-        self._validate_button = QPushButton("Validate")
-        self._validate_button.setObjectName("validateMarketData")
-        self._validate_button.clicked.connect(self._start_validation)
-        controls.addWidget(self._validate_button)
-        controls.addStretch(1)
-        layout.addLayout(controls)
+        controls_card.content.addLayout(universe_row)
+        layout.addWidget(controls_card)
 
-        self._job_status = QLabel("IDLE")
+        summary_grid = QGridLayout()
+        summary_grid.setHorizontalSpacing(14)
+
+        self._rows_card = MetricCard(
+            "Candles",
+            "—",
+            subtitle="1 minute OHLCV rows",
+            status="WAITING",
+            tone="muted",
+        )
+        self._gaps_card = MetricCard(
+            "Data gaps",
+            "—",
+            subtitle="Detected missing intervals",
+            status="WAITING",
+            tone="muted",
+        )
+        self._instruments_card = MetricCard(
+            "Instruments",
+            "—",
+            subtitle="Universe coverage",
+            status="WAITING",
+            tone="muted",
+        )
+        summary_grid.addWidget(self._rows_card, 0, 0)
+        summary_grid.addWidget(self._gaps_card, 0, 1)
+        summary_grid.addWidget(self._instruments_card, 0, 2)
+        summary_grid.setColumnStretch(0, 1)
+        summary_grid.setColumnStretch(1, 1)
+        summary_grid.setColumnStretch(2, 1)
+        layout.addLayout(summary_grid)
+
+        job_card = SectionCard(
+            "Background job",
+            subtitle="Загрузка и validation продолжаются без блокировки интерфейса.",
+        )
+        job_row = QHBoxLayout()
+
+        self._job_status = StatusBadge("IDLE", tone="muted")
         self._job_status.setObjectName("dataJobStatus")
-        layout.addWidget(self._job_status)
+        job_row.addWidget(self._job_status)
+
+        self._job_message = QLabel("No data job running.")
+        self._job_message.setObjectName("dataJobMessage")
+        self._job_message.setWordWrap(True)
+        job_row.addWidget(self._job_message, 1)
+        job_card.content.addLayout(job_row)
 
         self._job_progress = QProgressBar()
         self._job_progress.setObjectName("dataJobProgress")
         self._job_progress.setRange(0, 100)
         self._job_progress.setValue(0)
-        layout.addWidget(self._job_progress)
+        job_card.content.addWidget(self._job_progress)
+        layout.addWidget(job_card)
 
-        self._job_message = QLabel("No data job running.")
-        self._job_message.setObjectName("dataJobMessage")
-        self._job_message.setWordWrap(True)
-        layout.addWidget(self._job_message)
+        coverage_card = SectionCard(
+            "Market data coverage",
+            subtitle="Покрытие, checkpoints и найденные gaps по каждому инструменту.",
+        )
 
         self._summary = QLabel()
         self._summary.setObjectName("dataSummary")
-        layout.addWidget(self._summary)
+        self._summary.setWordWrap(True)
+        coverage_card.content.addWidget(self._summary)
 
         self._table = QTableWidget(0, 9)
         self._table.setObjectName("dataCoverageTable")
@@ -341,18 +521,24 @@ class DataPage(QWidget):
             QAbstractItemView.SelectionBehavior.SelectRows
         )
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setAlternatingRowColors(True)
+        self._table.setShowGrid(False)
         self._table.verticalHeader().setVisible(False)
-        header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
-        layout.addWidget(self._table, 1)
+        self._table.verticalHeader().setDefaultSectionSize(38)
+
+        table_header = self._table.horizontalHeader()
+        table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        table_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        table_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        table_header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        table_header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+        table_header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
+
+        coverage_card.content.addWidget(self._table, 1)
+        layout.addWidget(coverage_card, 1)
 
         self._timer = QTimer(self)
         self._timer.setInterval(300)
@@ -388,6 +574,7 @@ class DataPage(QWidget):
         if self._data is None or self._universe.count() == 0:
             self._table.setRowCount(0)
             self._summary.setText("No universe selected.")
+            self._set_summary_cards_empty()
             return
         try:
             status = self._data.get_status(self._selected_universe())
@@ -401,11 +588,13 @@ class DataPage(QWidget):
                 "Use Backfill 5 years to synchronize instruments automatically "
                 "and start loading data, or use Sync instruments only."
             )
+            self._set_summary_cards_empty()
             self._update_controls()
             return
         except Exception as exc:
             self._table.setRowCount(0)
             self._summary.setText(f"Unable to read data status: {exc}")
+            self._set_summary_cards_empty()
             self._update_controls()
             return
 
@@ -418,6 +607,25 @@ class DataPage(QWidget):
             f"Rows: {status.total_rows:,}    Gaps: {status.total_gaps}    "
             f"Instruments: {len(status.instruments)}"
         )
+
+        gap_tone = "success" if status.total_gaps == 0 else "warning"
+        gap_status = "CLEAN" if status.total_gaps == 0 else "REVIEW"
+        self._rows_card.set_metric(
+            value=f"{status.total_rows:,}",
+            status="READY" if self._has_data else "EMPTY",
+            tone="success" if self._has_data else "muted",
+        )
+        self._gaps_card.set_metric(
+            value=str(status.total_gaps),
+            status=gap_status,
+            tone=gap_tone,
+        )
+        self._instruments_card.set_metric(
+            value=str(len(status.instruments)),
+            status="SYNCED",
+            tone="success",
+        )
+
         self._table.setRowCount(len(status.instruments))
         for row, item in enumerate(status.instruments):
             progress = item.progress
@@ -433,8 +641,20 @@ class DataPage(QWidget):
                 "-" if progress is None else f"{round(progress * 100)}%",
             )
             for column, value in enumerate(values):
-                self._table.setItem(row, column, QTableWidgetItem(value))
+                cell = QTableWidgetItem(value)
+                if column == 0:
+                    font = cell.font()
+                    font.setBold(True)
+                    cell.setFont(font)
+                if column in {5, 6} and value not in {"0", "-"}:
+                    cell.setToolTip("Data quality issue detected")
+                self._table.setItem(row, column, cell)
         self._update_controls()
+
+    def _set_summary_cards_empty(self) -> None:
+        self._rows_card.set_metric(value="—", status="WAITING", tone="muted")
+        self._gaps_card.set_metric(value="—", status="WAITING", tone="muted")
+        self._instruments_card.set_metric(value="—", status="WAITING", tone="muted")
 
     @staticmethod
     def _format_timestamp(value: object) -> str:
@@ -517,7 +737,7 @@ class DataPage(QWidget):
         self._current_job_id = job_id
         self._current_job_kind = kind
         self._job_running = True
-        self._job_status.setText(JobStatus.PENDING.value)
+        self._job_status.set_status(JobStatus.PENDING.value, tone="info")
         self._job_progress.setValue(0)
         self._job_message.setText(message)
         self._update_controls()
@@ -535,7 +755,10 @@ class DataPage(QWidget):
         if self._data is None or self._current_job_id is None:
             return
         snapshot = self._data.get_job(self._current_job_id)
-        self._job_status.setText(snapshot.status.value)
+        self._job_status.set_status(
+            snapshot.status.value,
+            tone=_job_tone(snapshot.status),
+        )
         self._job_progress.setValue(round(snapshot.progress * 100))
         self._job_message.setText(snapshot.error or snapshot.message or "")
 
@@ -617,8 +840,8 @@ class SettingsPage(QWidget):
         self._tinvest_token = tinvest_token
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
+        layout.setContentsMargins(28, 26, 28, 26)
+        layout.setSpacing(18)
         layout.addWidget(
             PageHeader(
                 "Settings",
@@ -626,46 +849,59 @@ class SettingsPage(QWidget):
             )
         )
 
-        token_title = QLabel("T-Invest token")
-        token_title.setStyleSheet("font-size: 16px; font-weight: 600;")
-        layout.addWidget(token_title)
+        token_card = SectionCard(
+            "T-Invest connection",
+            subtitle="Токен хранится в OS keychain и не записывается в DuckDB.",
+        )
 
+        status_row = QHBoxLayout()
         self._token_status = QLabel()
         self._token_status.setObjectName("tinvestTokenStatus")
-        layout.addWidget(self._token_status)
+        status_row.addWidget(self._token_status)
 
         self._keychain_status = QLabel()
         self._keychain_status.setObjectName("keychainStatus")
-        layout.addWidget(self._keychain_status)
+        self._keychain_status.setProperty("tone", "muted")
+        status_row.addWidget(self._keychain_status)
+        status_row.addStretch(1)
+        token_card.content.addLayout(status_row)
 
         self._token_input = QLineEdit()
         self._token_input.setObjectName("tinvestTokenInput")
-        self._token_input.setPlaceholderText("Введите token")
+        self._token_input.setPlaceholderText("Введите T-Invest token")
         self._token_input.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addWidget(self._token_input)
+        token_card.content.addWidget(self._token_input)
 
         self._persist_checkbox = QCheckBox("Сохранить в OS keychain")
         self._persist_checkbox.setObjectName("persistToken")
         self._persist_checkbox.setChecked(True)
-        layout.addWidget(self._persist_checkbox)
+        token_card.content.addWidget(self._persist_checkbox)
 
         controls = QHBoxLayout()
-        self._save_button = QPushButton("Сохранить")
-        self._save_button.setObjectName("saveTinInvestToken")
+        self._save_button = _button(
+            "Сохранить",
+            object_name="saveTinInvestToken",
+            variant="primary",
+        )
         self._save_button.clicked.connect(self._save_token)
         controls.addWidget(self._save_button)
 
-        self._clear_button = QPushButton("Удалить")
-        self._clear_button.setObjectName("clearTinInvestToken")
+        self._clear_button = _button(
+            "Удалить",
+            object_name="clearTinInvestToken",
+            variant="danger",
+        )
         self._clear_button.clicked.connect(self._clear_token)
         controls.addWidget(self._clear_button)
         controls.addStretch(1)
-        layout.addLayout(controls)
+        token_card.content.addLayout(controls)
 
         self._token_message = QLabel()
         self._token_message.setObjectName("tinvestTokenMessage")
         self._token_message.setWordWrap(True)
-        layout.addWidget(self._token_message)
+        token_card.content.addWidget(self._token_message)
+
+        layout.addWidget(token_card)
         layout.addStretch(1)
 
         enabled = self._tinvest_token is not None
