@@ -23,7 +23,7 @@ def test_composed_services_bootstrap_then_report_healthy_status(tmp_path: Path) 
     status = services.get_system_status.execute()
 
     assert bootstrap.applied_migrations == {
-        "market": (1,),
+        "market": (1, 2),
         "research": (1,),
         "live": (1,),
     }
@@ -33,4 +33,5 @@ def test_composed_services_bootstrap_then_report_healthy_status(tmp_path: Path) 
         "research",
         "live",
     ]
-    assert all(database.schema_version == 1 for database in status.databases)
+    versions = {database.name: database.schema_version for database in status.databases}
+    assert versions == {"market": 2, "research": 1, "live": 1}
