@@ -42,6 +42,9 @@ class JobApplicationService:
 
         return self._manager.submit("Background test job", task)
 
+    def submit(self, name: str, task: Callable[[JobContext], object | None]) -> str:
+        return self._manager.submit(name, task)
+
     def get(self, job_id: str) -> JobSnapshot:
         return self._manager.get(job_id)
 
