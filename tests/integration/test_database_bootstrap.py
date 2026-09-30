@@ -27,7 +27,7 @@ def test_bootstrap_creates_three_databases_and_is_idempotent(tmp_path: Path) -> 
     second = use_case.execute()
 
     assert first.applied_migrations == {
-        "market": (1,),
+        "market": (1, 2),
         "research": (1,),
         "live": (1,),
     }
