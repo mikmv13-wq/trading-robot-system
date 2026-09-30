@@ -40,7 +40,7 @@ def test_stage0_bootstrap_is_idempotent_and_services_are_healthy(tmp_path: Path)
         status = services.get_system_status.execute()
 
         assert first.applied_migrations == {
-            "market": (1,),
+            "market": (1, 2),
             "research": (1,),
             "live": (1,),
         }
