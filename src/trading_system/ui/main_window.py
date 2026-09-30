@@ -16,11 +16,12 @@ from PySide6.QtWidgets import (
 )
 
 from trading_system.application import (
+    DataApplicationService,
     GetSystemStatusUseCase,
     JobApplicationService,
     TInvestTokenService,
 )
-from trading_system.ui.pages import DashboardPage, PlaceholderPage, SettingsPage
+from trading_system.ui.pages import DataPage, DashboardPage, PlaceholderPage, SettingsPage
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,7 @@ class MainWindow(QMainWindow):
         get_system_status: GetSystemStatusUseCase,
         jobs: JobApplicationService,
         tinvest_token: TInvestTokenService | None = None,
+        data: DataApplicationService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -99,6 +101,8 @@ class MainWindow(QMainWindow):
             page: QWidget
             if entry.key == "dashboard":
                 page = DashboardPage(get_system_status, jobs)
+            elif entry.key == "data":
+                page = DataPage(data)
             elif entry.key == "settings":
                 page = SettingsPage(tinvest_token)
             else:
