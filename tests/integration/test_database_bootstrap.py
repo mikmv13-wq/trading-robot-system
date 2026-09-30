@@ -56,6 +56,6 @@ def test_bootstrap_creates_three_databases_and_is_idempotent(tmp_path: Path) -> 
         finally:
             connection.close()
 
-        assert migrations == [(1, "init")]
+        expected_migrations = [(1, "init"), (2, "market_data")] if kind == "market" else [(1, "init")]\n        assert migrations == expected_migrations
         assert metadata["database_kind"] == kind
         assert metadata["schema_baseline"] == "stage-0"
