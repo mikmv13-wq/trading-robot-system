@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -45,6 +45,19 @@ def _close(services: ApplicationServices) -> None:
 
 def _format_ts(value: datetime | None) -> str:
     return "-" if value is None else value.isoformat()
+
+
+def _parse_utc_datetime(value: str | None, option_name: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        _fail(ValueError(f"{option_name} must be an RFC3339 timestamp"))
+        raise AssertionError("unreachable") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        _fail(ValueError(f"{option_name} must include a timezone"))
+    return parsed.astimezone(UTC)
 
 
 def _fail(exc: Exception) -> None:
@@ -142,12 +155,12 @@ def data_backfill(
     universe: Annotated[str, typer.Option(help="Universe identifier.")] = "default",
     resume: Annotated[bool, typer.Option(help="Resume from persisted checkpoints.")] = False,
     from_ts: Annotated[
-        datetime | None,
-        typer.Option(help="UTC range start. Omit for default 5-year range."),
+        str | None,
+        typer.Option(help="RFC3339 range start. Omit for default 5-year range."),
     ] = None,
     to_ts: Annotated[
-        datetime | None,
-        typer.Option(help="UTC range end. Omit for default 5-year range."),
+        str | None,
+        typer.Option(help="RFC3339 range end. Omit for default 5-year range."),
     ] = None,
     data_dir: Annotated[Path | None, typer.Option(help="Override runtime data directory.")] = None,
 ) -> None:
@@ -159,13 +172,15 @@ def data_backfill(
     services = build_application_services(_settings(data_dir=data_dir))
     try:
         try:
+            parsed_from = _parse_utc_datetime(from_ts, "--from-ts")
+            parsed_to = _parse_utc_datetime(to_ts, "--to-ts")
             job_id = (
                 services.data.resume_backfill(universe)
                 if resume
                 else services.data.start_backfill(
                     universe,
-                    from_ts=from_ts,
-                    to_ts=to_ts,
+                    from_ts=parsed_from,
+                    to_ts=parsed_to,
                 )
             )
             typer.echo(f"job={job_id} started")
@@ -198,12 +213,12 @@ def data_backfill(
 def data_validate(
     universe: Annotated[str, typer.Option(help="Universe identifier.")] = "default",
     from_ts: Annotated[
-        datetime | None,
-        typer.Option(help="UTC validation range start."),
+        str | None,
+        typer.Option(help="RFC3339 validation range start."),
     ] = None,
     to_ts: Annotated[
-        datetime | None,
-        typer.Option(help="UTC validation range end."),
+        str | None,
+        typer.Option(help="RFC3339 validation range end."),
     ] = None,
     data_dir: Annotated[Path | None, typer.Option(help="Override runtime data directory.")] = None,
 ) -> None:
@@ -214,8 +229,8 @@ def data_validate(
         try:
             report = services.data.validate(
                 universe,
-                from_ts=from_ts,
-                to_ts=to_ts,
+                from_ts=_parse_utc_datetime(from_ts, "--from-ts"),
+                to_ts=_parse_utc_datetime(to_ts, "--to-ts"),
             )
         except Exception as exc:
             _fail(exc)
