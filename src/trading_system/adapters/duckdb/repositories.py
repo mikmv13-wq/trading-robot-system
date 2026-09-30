@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import duckdb
 
 from trading_system.adapters.duckdb.connection import DuckDBConnectionFactory
-from trading_system.domain import Candle1m, Instrument, Universe
+from trading_system.domain import Candle1m, CandleDataStats, Instrument, Universe
 
 
 class RepositoryError(RuntimeError):
@@ -285,37 +285,79 @@ class DuckDBMarketRepository(DuckDBRepository):
         )
 
     def insert_candle(self, candle: Candle1m) -> None:
-        with self._verified_connection(read_only=False) as connection:
-            connection.execute(
-                """
-                INSERT INTO candles_1m(
-                    instrument_uid,
-                    ts,
-                    open,
-                    high,
-                    low,
-                    close,
-                    volume,
-                    is_complete
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    candle.instrument_uid,
-                    candle.ts,
-                    candle.open,
-                    candle.high,
-                    candle.low,
-                    candle.close,
-                    candle.volume,
-                    candle.is_complete,
-                ],
-            )
+        self.upsert_candles((candle,))
 
-    def list_candles(self, instrument_uid: str) -> tuple[Candle1m, ...]:
+    def upsert_candles(self, candles: Sequence[Candle1m]) -> None:
+        if not candles:
+            return
+
+        rows = [
+            (
+                candle.instrument_uid,
+                candle.ts,
+                candle.open,
+                candle.high,
+                candle.low,
+                candle.close,
+                candle.volume,
+                candle.is_complete,
+            )
+            for candle in candles
+        ]
+        with self._verified_connection(read_only=False) as connection:
+            try:
+                connection.execute("BEGIN TRANSACTION")
+                connection.executemany(
+                    """
+                    INSERT INTO candles_1m(
+                        instrument_uid,
+                        ts,
+                        open,
+                        high,
+                        low,
+                        close,
+                        volume,
+                        is_complete
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (instrument_uid, ts) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume,
+                        is_complete = EXCLUDED.is_complete
+                    """,
+                    rows,
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def get_candles(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+    ) -> tuple[Candle1m, ...]:
+        normalized_uid = instrument_uid.strip()
+        if not normalized_uid:
+            raise ValueError("instrument_uid must not be empty")
+        self._validate_optional_utc(from_ts, "from_ts")
+        self._validate_optional_utc(to_ts, "to_ts")
+        if from_ts is not None and to_ts is not None and from_ts >= to_ts:
+            raise ValueError("from_ts must be earlier than to_ts")
+
+        where_sql, params = self._candle_range_filter(
+            normalized_uid,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )
         with self._verified_connection() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT
                     instrument_uid,
                     ts,
@@ -326,24 +368,94 @@ class DuckDBMarketRepository(DuckDBRepository):
                     volume,
                     is_complete
                 FROM candles_1m
-                WHERE instrument_uid = ?
+                WHERE {where_sql}
                 ORDER BY ts
                 """,
-                [instrument_uid],
+                params,
             ).fetchall()
 
-        return tuple(
-            Candle1m(
-                instrument_uid=str(row[0]),
-                ts=row[1].astimezone(UTC),
-                open=row[2],
-                high=row[3],
-                low=row[4],
-                close=row[5],
-                volume=int(row[6]),
-                is_complete=bool(row[7]),
-            )
-            for row in rows
+        return tuple(self._candle_from_row(row) for row in rows)
+
+    def list_candles(self, instrument_uid: str) -> tuple[Candle1m, ...]:
+        return self.get_candles(instrument_uid)
+
+    def get_candle_stats(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+    ) -> CandleDataStats:
+        normalized_uid = instrument_uid.strip()
+        if not normalized_uid:
+            raise ValueError("instrument_uid must not be empty")
+        self._validate_optional_utc(from_ts, "from_ts")
+        self._validate_optional_utc(to_ts, "to_ts")
+        if from_ts is not None and to_ts is not None and from_ts >= to_ts:
+            raise ValueError("from_ts must be earlier than to_ts")
+
+        where_sql, params = self._candle_range_filter(
+            normalized_uid,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )
+        with self._verified_connection() as connection:
+            row = connection.execute(
+                f"""
+                SELECT COUNT(*), MIN(ts), MAX(ts)
+                FROM candles_1m
+                WHERE {where_sql}
+                """,
+                params,
+            ).fetchone()
+
+        if row is None:
+            raise RepositoryError("candle statistics query returned no row")
+        row_count = int(row[0])
+        return CandleDataStats(
+            instrument_uid=normalized_uid,
+            row_count=row_count,
+            min_timestamp=None if row[1] is None else row[1].astimezone(UTC),
+            max_timestamp=None if row[2] is None else row[2].astimezone(UTC),
+        )
+
+    @staticmethod
+    def _candle_range_filter(
+        instrument_uid: str,
+        *,
+        from_ts: datetime | None,
+        to_ts: datetime | None,
+    ) -> tuple[str, list[object]]:
+        clauses = ["instrument_uid = ?"]
+        params: list[object] = [instrument_uid]
+        if from_ts is not None:
+            clauses.append("ts >= ?")
+            params.append(from_ts)
+        if to_ts is not None:
+            clauses.append("ts < ?")
+            params.append(to_ts)
+        return " AND ".join(clauses), params
+
+    @staticmethod
+    def _validate_optional_utc(value: datetime | None, field_name: str) -> None:
+        if value is None:
+            return
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{field_name} must be timezone-aware UTC")
+        if value.utcoffset() != timedelta(0):
+            raise ValueError(f"{field_name} must be UTC")
+
+    @staticmethod
+    def _candle_from_row(row: tuple[Any, ...]) -> Candle1m:
+        return Candle1m(
+            instrument_uid=str(row[0]),
+            ts=row[1].astimezone(UTC),
+            open=row[2],
+            high=row[3],
+            low=row[4],
+            close=row[5],
+            volume=int(row[6]),
+            is_complete=bool(row[7]),
         )
 
     @staticmethod
