@@ -108,7 +108,7 @@ class DuckDBMarketRepository(DuckDBRepository):
         with self._verified_connection(read_only=False) as connection:
             connection.execute(
                 """
-                INSERT OR REPLACE INTO instruments(
+                INSERT INTO instruments(
                     instrument_uid,
                     ticker,
                     lot_size,
@@ -121,6 +121,16 @@ class DuckDBMarketRepository(DuckDBRepository):
                     updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT (instrument_uid) DO UPDATE SET
+                    ticker = EXCLUDED.ticker,
+                    lot_size = EXCLUDED.lot_size,
+                    name = EXCLUDED.name,
+                    currency = EXCLUDED.currency,
+                    figi = EXCLUDED.figi,
+                    exchange = EXCLUDED.exchange,
+                    instrument_type = EXCLUDED.instrument_type,
+                    active = EXCLUDED.active,
+                    updated_at = CURRENT_TIMESTAMP
                 """,
                 [
                     instrument.instrument_uid,
@@ -185,23 +195,18 @@ class DuckDBMarketRepository(DuckDBRepository):
                 connection.execute("BEGIN TRANSACTION")
                 connection.execute(
                     """
-                    INSERT OR REPLACE INTO universes(
+                    INSERT INTO universes(
                         universe_id,
                         name,
                         created_at,
                         updated_at
                     )
-                    VALUES (
-                        ?,
-                        ?,
-                        COALESCE(
-                            (SELECT created_at FROM universes WHERE universe_id = ?),
-                            CURRENT_TIMESTAMP
-                        ),
-                        CURRENT_TIMESTAMP
-                    )
+                    VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (universe_id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        updated_at = CURRENT_TIMESTAMP
                     """,
-                    [universe.universe_id, universe.name, universe.universe_id],
+                    [universe.universe_id, universe.name],
                 )
                 connection.execute(
                     "DELETE FROM universe_instruments WHERE universe_id = ?",
