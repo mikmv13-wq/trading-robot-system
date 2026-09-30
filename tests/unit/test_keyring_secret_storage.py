@@ -1,12 +1,14 @@
 import keyring
-from keyring.errors import NoKeyringError, PasswordDeleteError
 import pytest
+from keyring.errors import NoKeyringError, PasswordDeleteError
 
 from trading_system.adapters.keychain import KeyringSecretStorage
 from trading_system.ports import SecretStorageError
 
 
-def test_keyring_adapter_delegates_without_exposing_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_keyring_adapter_delegates_without_exposing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     values: dict[tuple[str, str], str] = {}
 
     monkeypatch.setattr(

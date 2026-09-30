@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 
 from trading_system.application import GetSystemStatusUseCase, JobApplicationService
 from trading_system.infrastructure import ThreadJobManager
-from trading_system.ui.main_window import MainWindow, NAVIGATION
+from trading_system.ui.main_window import NAVIGATION, MainWindow
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

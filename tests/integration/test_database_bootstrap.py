@@ -1,5 +1,5 @@
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 import duckdb
 
@@ -48,7 +48,11 @@ def test_bootstrap_creates_three_databases_and_is_idempotent(tmp_path: Path) -> 
             migrations = connection.execute(
                 "SELECT version, name FROM schema_migrations ORDER BY version"
             ).fetchall()
-            metadata = dict(connection.execute("SELECT key, value FROM database_metadata").fetchall())
+            metadata = dict(
+                connection.execute(
+                    "SELECT key, value FROM database_metadata"
+                ).fetchall()
+            )
         finally:
             connection.close()
 

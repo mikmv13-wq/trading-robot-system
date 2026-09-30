@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
-from typing import Mapping
 
 
 def _require_utc(value: datetime, field_name: str) -> None:
