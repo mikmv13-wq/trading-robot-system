@@ -12,8 +12,8 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 class Settings(BaseSettings):
     """Local application settings.
 
-    Secrets are intentionally excluded. Broker credentials will be provided by
-    the OS keychain adapter in a later stage.
+    Secrets are intentionally excluded. Broker credentials are provided by
+    the OS keychain adapter.
     """
 
     model_config = SettingsConfigDict(
@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default=Path("data"))
     log_dir: Path = Field(default=Path("logs"))
     sql_dir: Path = Field(default=Path("sql"))
+    config_dir: Path = Field(default=Path("config"))
     log_level: LogLevel = "INFO"
 
     @property
@@ -39,6 +40,10 @@ class Settings(BaseSettings):
     @property
     def live_db_path(self) -> Path:
         return self.data_dir / "live.duckdb"
+
+    @property
+    def universe_config_path(self) -> Path:
+        return self.config_dir / "universe.toml"
 
     def ensure_runtime_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
