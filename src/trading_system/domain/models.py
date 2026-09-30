@@ -61,6 +61,7 @@ class Universe:
             raise ValueError("instrument_uids must not contain empty values")
         if len(set(self.instrument_uids)) != len(self.instrument_uids):
             raise ValueError("instrument_uids must not contain duplicates")
+        object.__setattr__(self, "instrument_uids", tuple(sorted(self.instrument_uids)))
 
 
 @dataclass(frozen=True, slots=True)
