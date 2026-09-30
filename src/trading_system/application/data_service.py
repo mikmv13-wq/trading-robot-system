@@ -32,7 +32,21 @@ class InstrumentDataStatus:
     gap_count: int
     missing_minutes: int
     checkpoint_status: IngestionStatus | None
+    requested_from: datetime | None
+    requested_to: datetime | None
     completed_until: datetime | None
+
+    @property
+    def progress(self) -> float | None:
+        if self.requested_from is None or self.requested_to is None:
+            return None
+        total_seconds = (self.requested_to - self.requested_from).total_seconds()
+        if total_seconds <= 0:
+            return None
+        if self.completed_until is None:
+            return 0.0
+        completed_seconds = (self.completed_until - self.requested_from).total_seconds()
+        return max(0.0, min(1.0, completed_seconds / total_seconds))
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +197,12 @@ class DataApplicationService:
                     missing_minutes=missing_minutes,
                     checkpoint_status=(
                         None if checkpoint is None else checkpoint.status
+                    ),
+                    requested_from=(
+                        None if checkpoint is None else checkpoint.requested_from
+                    ),
+                    requested_to=(
+                        None if checkpoint is None else checkpoint.requested_to
                     ),
                     completed_until=(
                         None if checkpoint is None else checkpoint.completed_until
