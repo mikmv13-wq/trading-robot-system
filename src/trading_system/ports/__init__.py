@@ -6,7 +6,7 @@ from trading_system.ports.repositories import (
 )
 from trading_system.ports.secrets import SecretStorage, SecretStorageError
 from trading_system.ports.storage import DatabaseBootstrapper
-from trading_system.ports.tinvest import TInvestMarketDataClient
+from trading_system.ports.tinvest import TInvestInstrumentsClient, TInvestMarketDataClient
 
 __all__ = [
     "DatabaseBootstrapper",
@@ -16,5 +16,6 @@ __all__ = [
     "ResearchRepository",
     "SecretStorage",
     "SecretStorageError",
+    "TInvestInstrumentsClient",
     "TInvestMarketDataClient",
 ]
