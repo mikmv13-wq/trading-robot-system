@@ -243,10 +243,12 @@ def data_validate(
         for item in report.instruments:
             typer.echo(
                 f"{item.instrument_uid}: status={item.status.value} "
-                f"rows={item.stats.row_count} gaps={item.gap_count} "
+                f"rows={item.stats.row_count}/{item.expected_minutes} "
+                f"coverage={item.coverage_ratio:.2%} gaps={item.gap_count} "
                 f"missing_minutes={item.missing_minutes} "
                 f"min={_format_ts(item.stats.min_timestamp)} "
-                f"max={_format_ts(item.stats.max_timestamp)}"
+                f"max={_format_ts(item.stats.max_timestamp)} "
+                f"reasons={'; '.join(item.anomaly_reasons) or '-'}"
             )
     finally:
         _close(services)
