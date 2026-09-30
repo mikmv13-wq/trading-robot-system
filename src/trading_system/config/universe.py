@@ -32,6 +32,8 @@ class UniverseDefinition:
 class UniverseConfigProvider(Protocol):
     def get_universe(self, universe_id: str) -> UniverseDefinition: ...
 
+    def list_universes(self) -> tuple[UniverseDefinition, ...]: ...
+
 
 class FileUniverseConfig:
     def __init__(self, path: Path) -> None:
@@ -49,6 +51,10 @@ class FileUniverseConfig:
             raise UniverseConfigError(
                 f"universe {universe_id!r} is not defined in {self._path}"
             ) from exc
+
+    def list_universes(self) -> tuple[UniverseDefinition, ...]:
+        universes = self._load_universes()
+        return tuple(universes[key] for key in sorted(universes))
 
     def _load_universes(self) -> dict[str, UniverseDefinition]:
         try:
