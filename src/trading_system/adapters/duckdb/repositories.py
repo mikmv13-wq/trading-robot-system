@@ -106,44 +106,7 @@ class DuckDBMarketRepository(DuckDBRepository):
 
     def upsert_instrument(self, instrument: Instrument) -> None:
         with self._verified_connection(read_only=False) as connection:
-            connection.execute(
-                """
-                INSERT INTO instruments(
-                    instrument_uid,
-                    ticker,
-                    lot_size,
-                    name,
-                    currency,
-                    figi,
-                    exchange,
-                    instrument_type,
-                    active,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT (instrument_uid) DO UPDATE SET
-                    ticker = EXCLUDED.ticker,
-                    lot_size = EXCLUDED.lot_size,
-                    name = EXCLUDED.name,
-                    currency = EXCLUDED.currency,
-                    figi = EXCLUDED.figi,
-                    exchange = EXCLUDED.exchange,
-                    instrument_type = EXCLUDED.instrument_type,
-                    active = EXCLUDED.active,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                [
-                    instrument.instrument_uid,
-                    instrument.ticker,
-                    instrument.lot_size,
-                    instrument.name,
-                    instrument.currency,
-                    instrument.figi,
-                    instrument.exchange,
-                    instrument.instrument_type,
-                    instrument.active,
-                ],
-            )
+            self._upsert_instrument(connection, instrument)
 
     def get_instrument(self, instrument_uid: str) -> Instrument | None:
         with self._verified_connection() as connection:
@@ -193,37 +156,109 @@ class DuckDBMarketRepository(DuckDBRepository):
         with self._verified_connection(read_only=False) as connection:
             try:
                 connection.execute("BEGIN TRANSACTION")
-                connection.execute(
-                    """
-                    INSERT INTO universes(
-                        universe_id,
-                        name,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT (universe_id) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    [universe.universe_id, universe.name],
-                )
-                connection.execute(
-                    "DELETE FROM universe_instruments WHERE universe_id = ?",
-                    [universe.universe_id],
-                )
-                for instrument_uid in universe.instrument_uids:
-                    connection.execute(
-                        """
-                        INSERT INTO universe_instruments(universe_id, instrument_uid)
-                        VALUES (?, ?)
-                        """,
-                        [universe.universe_id, instrument_uid],
-                    )
+                self._replace_universe(connection, universe)
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
                 raise
+
+    def sync_universe(
+        self,
+        universe: Universe,
+        instruments: tuple[Instrument, ...],
+    ) -> None:
+        expected_uids = set(universe.instrument_uids)
+        actual_uids = {instrument.instrument_uid for instrument in instruments}
+        if expected_uids != actual_uids:
+            raise ValueError("universe instrument_uids must match synchronized instruments")
+
+        with self._verified_connection(read_only=False) as connection:
+            try:
+                connection.execute("BEGIN TRANSACTION")
+                for instrument in instruments:
+                    self._upsert_instrument(connection, instrument)
+                self._replace_universe(connection, universe)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    @staticmethod
+    def _upsert_instrument(
+        connection: duckdb.DuckDBPyConnection,
+        instrument: Instrument,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO instruments(
+                instrument_uid,
+                ticker,
+                lot_size,
+                name,
+                currency,
+                figi,
+                exchange,
+                instrument_type,
+                active,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (instrument_uid) DO UPDATE SET
+                ticker = EXCLUDED.ticker,
+                lot_size = EXCLUDED.lot_size,
+                name = EXCLUDED.name,
+                currency = EXCLUDED.currency,
+                figi = EXCLUDED.figi,
+                exchange = EXCLUDED.exchange,
+                instrument_type = EXCLUDED.instrument_type,
+                active = EXCLUDED.active,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [
+                instrument.instrument_uid,
+                instrument.ticker,
+                instrument.lot_size,
+                instrument.name,
+                instrument.currency,
+                instrument.figi,
+                instrument.exchange,
+                instrument.instrument_type,
+                instrument.active,
+            ],
+        )
+
+    @staticmethod
+    def _replace_universe(
+        connection: duckdb.DuckDBPyConnection,
+        universe: Universe,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO universes(
+                universe_id,
+                name,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (universe_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [universe.universe_id, universe.name],
+        )
+        connection.execute(
+            "DELETE FROM universe_instruments WHERE universe_id = ?",
+            [universe.universe_id],
+        )
+        for instrument_uid in universe.instrument_uids:
+            connection.execute(
+                """
+                INSERT INTO universe_instruments(universe_id, instrument_uid)
+                VALUES (?, ?)
+                """,
+                [universe.universe_id, instrument_uid],
+            )
 
     def get_universe(self, universe_id: str) -> Universe | None:
         with self._verified_connection() as connection:
