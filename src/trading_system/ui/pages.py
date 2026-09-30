@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from trading_system.application import (
     DataApplicationService,
+    DataUniverseNotFoundError,
     GetSystemStatusUseCase,
     HealthStatus,
     JobApplicationService,
@@ -242,6 +243,12 @@ class DataPage(QWidget):
         self.setObjectName("page-data")
         self._data = data
         self._current_job_id: str | None = None
+        self._current_job_kind: str | None = None
+        self._pending_action: str | None = None
+        self._job_running = False
+        self._universe_synchronized = False
+        self._has_checkpoint = False
+        self._has_data = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -375,7 +382,7 @@ class DataPage(QWidget):
                 f"{universe.name} ({universe.universe_id})",
                 universe.universe_id,
             )
-        self._set_enabled(bool(universes))
+        self._update_controls()
 
     def refresh_status(self) -> None:
         if self._data is None or self._universe.count() == 0:
@@ -384,11 +391,29 @@ class DataPage(QWidget):
             return
         try:
             status = self._data.get_status(self._selected_universe())
+        except DataUniverseNotFoundError:
+            self._universe_synchronized = False
+            self._has_checkpoint = False
+            self._has_data = False
+            self._table.setRowCount(0)
+            self._summary.setText(
+                "Universe is not synchronized yet. "
+                "Use Backfill 5 years to synchronize instruments automatically "
+                "and start loading data, or use Sync instruments only."
+            )
+            self._update_controls()
+            return
         except Exception as exc:
             self._table.setRowCount(0)
-            self._summary.setText(f"Data status unavailable: {exc}")
+            self._summary.setText(f"Unable to read data status: {exc}")
+            self._update_controls()
             return
 
+        self._universe_synchronized = True
+        self._has_checkpoint = any(
+            item.checkpoint_status is not None for item in status.instruments
+        )
+        self._has_data = status.total_rows > 0
         self._summary.setText(
             f"Rows: {status.total_rows:,}    Gaps: {status.total_gaps}    "
             f"Instruments: {len(status.instruments)}"
@@ -409,6 +434,7 @@ class DataPage(QWidget):
             )
             for column, value in enumerate(values):
                 self._table.setItem(row, column, QTableWidgetItem(value))
+        self._update_controls()
 
     @staticmethod
     def _format_timestamp(value: object) -> str:
@@ -421,35 +447,87 @@ class DataPage(QWidget):
     def _start_sync(self) -> None:
         if self._data is None:
             return
-        self._start_job(self._data.start_sync(self._selected_universe()))
+        self._pending_action = None
+        self._start_job(
+            self._data.start_sync(self._selected_universe()),
+            kind="sync",
+            message="Synchronizing instruments with T-Invest...",
+        )
 
     def _start_backfill(self) -> None:
         if self._data is None:
             return
-        self._start_job(self._data.start_backfill(self._selected_universe()))
+        if not self._universe_synchronized:
+            self._pending_action = "backfill"
+            self._start_job(
+                self._data.start_sync(self._selected_universe()),
+                kind="sync",
+                message=(
+                    "Universe is not synchronized. "
+                    "Synchronizing instruments before 5-year backfill..."
+                ),
+            )
+            return
+        self._start_backfill_job()
+
+    def _start_backfill_job(self) -> None:
+        if self._data is None:
+            return
+        self._start_job(
+            self._data.start_backfill(self._selected_universe()),
+            kind="backfill",
+            message="Starting 5-year historical backfill...",
+        )
 
     def _resume_backfill(self) -> None:
         if self._data is None:
             return
-        self._start_job(self._data.resume_backfill(self._selected_universe()))
+        if not self._universe_synchronized or not self._has_checkpoint:
+            self._job_message.setText(
+                "Nothing to resume yet. Run Backfill 5 years first."
+            )
+            return
+        self._start_job(
+            self._data.resume_backfill(self._selected_universe()),
+            kind="resume",
+            message="Resuming historical backfill from checkpoint...",
+        )
 
     def _start_validation(self) -> None:
         if self._data is None:
             return
-        self._start_job(self._data.start_validation(self._selected_universe()))
+        if not self._universe_synchronized or not self._has_data:
+            self._job_message.setText(
+                "No historical data to validate. Run Backfill 5 years first."
+            )
+            return
+        self._start_job(
+            self._data.start_validation(self._selected_universe()),
+            kind="validate",
+            message="Validating historical market data...",
+        )
 
-    def _start_job(self, job_id: str) -> None:
+    def _start_job(
+        self,
+        job_id: str,
+        *,
+        kind: str,
+        message: str,
+    ) -> None:
         self._current_job_id = job_id
+        self._current_job_kind = kind
+        self._job_running = True
         self._job_status.setText(JobStatus.PENDING.value)
         self._job_progress.setValue(0)
-        self._job_message.setText(f"Job {job_id} submitted.")
-        self._set_controls_running(True)
+        self._job_message.setText(message)
+        self._update_controls()
         self._timer.start()
         self._poll_job()
 
     def _cancel_job(self) -> None:
         if self._data is None or self._current_job_id is None:
             return
+        self._pending_action = None
         self._data.cancel_backfill(self._current_job_id)
         self._poll_job()
 
@@ -460,21 +538,63 @@ class DataPage(QWidget):
         self._job_status.setText(snapshot.status.value)
         self._job_progress.setValue(round(snapshot.progress * 100))
         self._job_message.setText(snapshot.error or snapshot.message or "")
-        self.refresh_status()
 
         if snapshot.status.terminal:
+            completed_kind = self._current_job_kind
+            pending_action = self._pending_action
             self._timer.stop()
-            self._set_controls_running(False)
+            self._job_running = False
             self.refresh_status()
 
-    def _set_controls_running(self, running: bool) -> None:
-        self._sync_button.setEnabled(not running)
-        self._backfill_button.setEnabled(not running)
-        self._resume_button.setEnabled(not running)
-        self._validate_button.setEnabled(not running)
-        self._refresh_button.setEnabled(not running)
-        self._universe.setEnabled(not running)
-        self._cancel_button.setEnabled(running)
+            if (
+                snapshot.status is JobStatus.COMPLETED
+                and completed_kind == "sync"
+                and pending_action == "backfill"
+            ):
+                self._pending_action = None
+                self._start_backfill_job()
+                return
+
+            self._pending_action = None
+            self._update_controls()
+            return
+
+        self.refresh_status()
+        self._update_controls()
+
+    def _update_controls(self) -> None:
+        enabled = self._data is not None and self._universe.count() > 0
+        if not enabled:
+            self._universe.setEnabled(False)
+            self._sync_button.setEnabled(False)
+            self._backfill_button.setEnabled(False)
+            self._resume_button.setEnabled(False)
+            self._validate_button.setEnabled(False)
+            self._refresh_button.setEnabled(False)
+            self._cancel_button.setEnabled(False)
+            return
+
+        if self._job_running:
+            self._universe.setEnabled(False)
+            self._sync_button.setEnabled(False)
+            self._backfill_button.setEnabled(False)
+            self._resume_button.setEnabled(False)
+            self._validate_button.setEnabled(False)
+            self._refresh_button.setEnabled(False)
+            self._cancel_button.setEnabled(True)
+            return
+
+        self._universe.setEnabled(True)
+        self._sync_button.setEnabled(True)
+        self._backfill_button.setEnabled(True)
+        self._resume_button.setEnabled(
+            self._universe_synchronized and self._has_checkpoint
+        )
+        self._validate_button.setEnabled(
+            self._universe_synchronized and self._has_data
+        )
+        self._refresh_button.setEnabled(True)
+        self._cancel_button.setEnabled(False)
 
     def _set_enabled(self, enabled: bool) -> None:
         self._universe.setEnabled(enabled)
