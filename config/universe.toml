@@ -1,0 +1,14 @@
+[universes.default]
+name = "Default MOEX universe"
+tickers = [
+    "SBER",
+    "GAZP",
+    "LKOH",
+    "ROSN",
+    "NVTK",
+    "GMKN",
+    "PLZL",
+    "YDEX",
+    "T",
+    "MGNT",
+]
