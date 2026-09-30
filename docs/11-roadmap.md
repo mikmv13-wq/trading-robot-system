@@ -85,6 +85,27 @@ Developer CLI может дублировать эти use cases для CI/diagn
 - порядок размера dataset соответствует ожидаемому диапазону, а аномалии объяснены;
 - весь этап можно выполнить из GUI без CLI.
 
+### Проверка реализации Stage 1
+
+Автоматический CI gate `Stage 1 market data smoke` проверяет representative
+end-to-end сценарий на universe из 10 инструментов:
+
+- instrument sync по broker UID;
+- chunked ingestion;
+- interruption → checkpoint → resume;
+- повторный backfill без дублей;
+- UTC round-trip;
+- row count/min/max по каждому инструменту;
+- gap во время наблюдаемой активности рынка;
+- отсутствие ложных gaps в общерыночные закрытые интервалы;
+- expected observed minutes, coverage ratio и объяснение аномалий;
+- Data GUI workflow без CLI.
+
+Фактическое 5-летнее покрытие реального T-Invest universe проверяется после
+выполнения live backfill через экран `Data → Validate`; CI не использует
+пользовательский broker token. Default production range при этом отдельно
+фиксируется тестом как пять календарных лет.
+
 ---
 
 ## Этап 2. Агрегатор
