@@ -33,6 +33,16 @@ class IngestionStatus(StrEnum):
     COMPLETED = "COMPLETED"
 
 
+class GapClassification(StrEnum):
+    MISSING_DURING_OBSERVED_MARKET = "MISSING_DURING_OBSERVED_MARKET"
+
+
+class DataQualityStatus(StrEnum):
+    PASS = "PASS"
+    WARNING = "WARNING"
+    FAIL = "FAIL"
+
+
 @dataclass(frozen=True, slots=True)
 class Instrument:
     instrument_uid: str
@@ -155,6 +165,88 @@ class IngestionCheckpoint:
                 raise ValueError("completed_until must be within requested range")
         if self.updated_at is not None:
             _require_utc(self.updated_at, "updated_at")
+
+
+@dataclass(frozen=True, slots=True)
+class DataGap:
+    instrument_uid: str
+    start_ts: datetime
+    end_ts: datetime
+    classification: GapClassification
+
+    def __post_init__(self) -> None:
+        if not self.instrument_uid.strip():
+            raise ValueError("instrument_uid must not be empty")
+        _require_utc(self.start_ts, "start_ts")
+        _require_utc(self.end_ts, "end_ts")
+        if self.start_ts >= self.end_ts:
+            raise ValueError("start_ts must be earlier than end_ts")
+
+
+@dataclass(frozen=True, slots=True)
+class CandleQualityCounts:
+    instrument_uid: str
+    row_count: int
+    incomplete_count: int
+    future_count: int
+    invalid_ohlc_count: int
+    negative_volume_count: int
+    off_minute_count: int
+
+    def __post_init__(self) -> None:
+        if not self.instrument_uid.strip():
+            raise ValueError("instrument_uid must not be empty")
+        values = (
+            self.row_count,
+            self.incomplete_count,
+            self.future_count,
+            self.invalid_ohlc_count,
+            self.negative_volume_count,
+            self.off_minute_count,
+        )
+        if any(value < 0 for value in values):
+            raise ValueError("quality counts must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentDataQuality:
+    instrument_uid: str
+    status: DataQualityStatus
+    stats: CandleDataStats
+    gap_count: int
+    missing_minutes: int
+    quality: CandleQualityCounts
+
+    def __post_init__(self) -> None:
+        if self.gap_count < 0 or self.missing_minutes < 0:
+            raise ValueError("gap counters must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class DataQualityReport:
+    run_id: str
+    universe_id: str
+    started_at: datetime
+    completed_at: datetime
+    status: DataQualityStatus
+    from_ts: datetime
+    to_ts: datetime
+    instruments: tuple[InstrumentDataQuality, ...]
+    calendar_mode: str = "observed_universe_activity"
+
+    def __post_init__(self) -> None:
+        if not self.run_id.strip():
+            raise ValueError("run_id must not be empty")
+        if not self.universe_id.strip():
+            raise ValueError("universe_id must not be empty")
+        _require_utc(self.started_at, "started_at")
+        _require_utc(self.completed_at, "completed_at")
+        _require_utc(self.from_ts, "from_ts")
+        _require_utc(self.to_ts, "to_ts")
+        if self.started_at > self.completed_at:
+            raise ValueError("started_at must not be after completed_at")
+        if self.from_ts >= self.to_ts:
+            raise ValueError("from_ts must be earlier than to_ts")
 
 
 @dataclass(frozen=True, slots=True)
