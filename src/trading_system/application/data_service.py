@@ -12,7 +12,8 @@ from trading_system.application.instrument_sync import (
     SyncInstrumentsUseCase,
 )
 from trading_system.application.job_service import JobApplicationService
-from trading_system.application.jobs import JobSnapshot
+from trading_system.application.jobs import JobContext, JobSnapshot
+from trading_system.config import UniverseConfigProvider, UniverseDefinition
 from trading_system.domain import DataQualityReport, IngestionStatus
 from trading_system.ports import MarketRepository
 
@@ -61,6 +62,7 @@ class DataApplicationService:
         validate_market_data: ValidateMarketDataUseCase,
         jobs: JobApplicationService,
         market_repository: MarketRepository,
+        universe_config: UniverseConfigProvider,
         *,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -69,10 +71,23 @@ class DataApplicationService:
         self._validate_market_data = validate_market_data
         self._jobs = jobs
         self._market_repository = market_repository
+        self._universe_config = universe_config
         self._sleeper = sleeper
+
+    def list_universes(self) -> tuple[UniverseDefinition, ...]:
+        return self._universe_config.list_universes()
 
     def sync_instruments(self, universe_id: str = "default") -> InstrumentSyncResult:
         return self._sync_instruments.execute(universe_id)
+
+    def start_sync(self, universe_id: str = "default") -> str:
+        def task(context: JobContext) -> InstrumentSyncResult:
+            context.report_progress(0.1, f"Synchronizing instruments: {universe_id}")
+            result = self._sync_instruments.execute(universe_id)
+            context.report_progress(1.0, f"Synchronized {len(result.instruments)} instruments")
+            return result
+
+        return self._jobs.submit(f"Instrument sync: {universe_id}", task)
 
     def start_backfill(
         self,
@@ -110,6 +125,15 @@ class DataApplicationService:
             self._sleeper(poll_interval_seconds)
             snapshot = self._jobs.get(job_id)
         return snapshot
+
+    def start_validation(self, universe_id: str = "default") -> str:
+        def task(context: JobContext) -> DataQualityReport:
+            context.report_progress(0.05, f"Validating market data: {universe_id}")
+            report = self._validate_market_data.execute(universe_id)
+            context.report_progress(1.0, f"Validation completed: {report.status.value}")
+            return report
+
+        return self._jobs.submit(f"Data validation: {universe_id}", task)
 
     def validate(
         self,
