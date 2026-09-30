@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from trading_system.application import (
+    DataApplicationService,
     GetSystemStatusUseCase,
     HealthStatus,
     JobApplicationService,
@@ -228,6 +230,260 @@ class DashboardPage(QWidget):
             self._job_timer.stop()
             self._run_job_button.setEnabled(True)
             self._cancel_job_button.setEnabled(False)
+
+
+class DataPage(QWidget):
+    def __init__(
+        self,
+        data: DataApplicationService | None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("page-data")
+        self._data = data
+        self._current_job_id: str | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+        layout.addWidget(
+            PageHeader(
+                "Data",
+                "Universe, исторические 1m данные, coverage и контроль качества.",
+            )
+        )
+
+        universe_row = QHBoxLayout()
+        universe_row.addWidget(QLabel("Universe:"))
+        self._universe = QComboBox()
+        self._universe.setObjectName("dataUniverse")
+        self._universe.currentIndexChanged.connect(self.refresh_status)
+        universe_row.addWidget(self._universe, 1)
+
+        self._sync_button = QPushButton("Sync instruments")
+        self._sync_button.setObjectName("syncInstruments")
+        self._sync_button.clicked.connect(self._start_sync)
+        universe_row.addWidget(self._sync_button)
+
+        self._refresh_button = QPushButton("Refresh")
+        self._refresh_button.setObjectName("refreshDataStatus")
+        self._refresh_button.clicked.connect(self.refresh_status)
+        universe_row.addWidget(self._refresh_button)
+        layout.addLayout(universe_row)
+
+        controls = QHBoxLayout()
+        self._backfill_button = QPushButton("Backfill 5 years")
+        self._backfill_button.setObjectName("startDataBackfill")
+        self._backfill_button.clicked.connect(self._start_backfill)
+        controls.addWidget(self._backfill_button)
+
+        self._resume_button = QPushButton("Resume")
+        self._resume_button.setObjectName("resumeDataBackfill")
+        self._resume_button.clicked.connect(self._resume_backfill)
+        controls.addWidget(self._resume_button)
+
+        self._cancel_button = QPushButton("Cancel")
+        self._cancel_button.setObjectName("cancelDataJob")
+        self._cancel_button.setEnabled(False)
+        self._cancel_button.clicked.connect(self._cancel_job)
+        controls.addWidget(self._cancel_button)
+
+        self._validate_button = QPushButton("Validate")
+        self._validate_button.setObjectName("validateMarketData")
+        self._validate_button.clicked.connect(self._start_validation)
+        controls.addWidget(self._validate_button)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        self._job_status = QLabel("IDLE")
+        self._job_status.setObjectName("dataJobStatus")
+        layout.addWidget(self._job_status)
+
+        self._job_progress = QProgressBar()
+        self._job_progress.setObjectName("dataJobProgress")
+        self._job_progress.setRange(0, 100)
+        self._job_progress.setValue(0)
+        layout.addWidget(self._job_progress)
+
+        self._job_message = QLabel("No data job running.")
+        self._job_message.setObjectName("dataJobMessage")
+        self._job_message.setWordWrap(True)
+        layout.addWidget(self._job_message)
+
+        self._summary = QLabel()
+        self._summary.setObjectName("dataSummary")
+        layout.addWidget(self._summary)
+
+        self._table = QTableWidget(0, 9)
+        self._table.setObjectName("dataCoverageTable")
+        self._table.setHorizontalHeaderLabels(
+            [
+                "Ticker",
+                "UID",
+                "Rows",
+                "From",
+                "To",
+                "Gaps",
+                "Missing min",
+                "Checkpoint",
+                "Progress",
+            ]
+        )
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.verticalHeader().setVisible(False)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self._table, 1)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(300)
+        self._timer.timeout.connect(self._poll_job)
+
+        self._load_universes()
+        self.refresh_status()
+
+    def _selected_universe(self) -> str:
+        value = self._universe.currentData()
+        return str(value) if value is not None else "default"
+
+    def _load_universes(self) -> None:
+        self._universe.clear()
+        if self._data is None:
+            self._set_enabled(False)
+            self._job_message.setText("Data application service is unavailable.")
+            return
+        try:
+            universes = self._data.list_universes()
+        except Exception as exc:
+            self._set_enabled(False)
+            self._job_message.setText(str(exc))
+            return
+        for universe in universes:
+            self._universe.addItem(
+                f"{universe.name} ({universe.universe_id})",
+                universe.universe_id,
+            )
+        self._set_enabled(bool(universes))
+
+    def refresh_status(self) -> None:
+        if self._data is None or self._universe.count() == 0:
+            self._table.setRowCount(0)
+            self._summary.setText("No universe selected.")
+            return
+        try:
+            status = self._data.get_status(self._selected_universe())
+        except Exception as exc:
+            self._table.setRowCount(0)
+            self._summary.setText(f"Data status unavailable: {exc}")
+            return
+
+        self._summary.setText(
+            f"Rows: {status.total_rows:,}    Gaps: {status.total_gaps}    "
+            f"Instruments: {len(status.instruments)}"
+        )
+        self._table.setRowCount(len(status.instruments))
+        for row, item in enumerate(status.instruments):
+            progress = item.progress
+            values = (
+                item.ticker,
+                item.instrument_uid,
+                f"{item.row_count:,}",
+                self._format_timestamp(item.min_timestamp),
+                self._format_timestamp(item.max_timestamp),
+                str(item.gap_count),
+                str(item.missing_minutes),
+                "-" if item.checkpoint_status is None else item.checkpoint_status.value,
+                "-" if progress is None else f"{round(progress * 100)}%",
+            )
+            for column, value in enumerate(values):
+                self._table.setItem(row, column, QTableWidgetItem(value))
+
+    @staticmethod
+    def _format_timestamp(value: object) -> str:
+        if value is None:
+            return "-"
+        if hasattr(value, "isoformat"):
+            return str(value.isoformat())
+        return str(value)
+
+    def _start_sync(self) -> None:
+        if self._data is None:
+            return
+        self._start_job(self._data.start_sync(self._selected_universe()))
+
+    def _start_backfill(self) -> None:
+        if self._data is None:
+            return
+        self._start_job(self._data.start_backfill(self._selected_universe()))
+
+    def _resume_backfill(self) -> None:
+        if self._data is None:
+            return
+        self._start_job(self._data.resume_backfill(self._selected_universe()))
+
+    def _start_validation(self) -> None:
+        if self._data is None:
+            return
+        self._start_job(self._data.start_validation(self._selected_universe()))
+
+    def _start_job(self, job_id: str) -> None:
+        self._current_job_id = job_id
+        self._job_status.setText(JobStatus.PENDING.value)
+        self._job_progress.setValue(0)
+        self._job_message.setText(f"Job {job_id} submitted.")
+        self._set_controls_running(True)
+        self._timer.start()
+        self._poll_job()
+
+    def _cancel_job(self) -> None:
+        if self._data is None or self._current_job_id is None:
+            return
+        self._data.cancel_backfill(self._current_job_id)
+        self._poll_job()
+
+    def _poll_job(self) -> None:
+        if self._data is None or self._current_job_id is None:
+            return
+        snapshot = self._data.get_job(self._current_job_id)
+        self._job_status.setText(snapshot.status.value)
+        self._job_progress.setValue(round(snapshot.progress * 100))
+        self._job_message.setText(snapshot.error or snapshot.message or "")
+        self.refresh_status()
+
+        if snapshot.status.terminal:
+            self._timer.stop()
+            self._set_controls_running(False)
+            self.refresh_status()
+
+    def _set_controls_running(self, running: bool) -> None:
+        self._sync_button.setEnabled(not running)
+        self._backfill_button.setEnabled(not running)
+        self._resume_button.setEnabled(not running)
+        self._validate_button.setEnabled(not running)
+        self._refresh_button.setEnabled(not running)
+        self._universe.setEnabled(not running)
+        self._cancel_button.setEnabled(running)
+
+    def _set_enabled(self, enabled: bool) -> None:
+        self._universe.setEnabled(enabled)
+        self._sync_button.setEnabled(enabled)
+        self._backfill_button.setEnabled(enabled)
+        self._resume_button.setEnabled(enabled)
+        self._validate_button.setEnabled(enabled)
+        self._refresh_button.setEnabled(enabled)
+        self._cancel_button.setEnabled(False)
 
 
 class SettingsPage(QWidget):
