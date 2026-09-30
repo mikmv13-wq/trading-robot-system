@@ -21,7 +21,7 @@ from trading_system.application import (
     JobApplicationService,
     TInvestTokenService,
 )
-from trading_system.ui.pages import DataPage, DashboardPage, PlaceholderPage, SettingsPage
+from trading_system.ui.pages import DashboardPage, DataPage, PlaceholderPage, SettingsPage
 
 
 @dataclass(frozen=True, slots=True)
