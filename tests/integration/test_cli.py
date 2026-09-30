@@ -37,7 +37,7 @@ def test_cli_bootstrap_and_db_status_use_same_application_services(tmp_path: Pat
     assert "live: applied migrations: 1" in bootstrap.stdout
 
     assert status.exit_code == 0
-    assert "market: OK schema=1 baseline=stage-0" in status.stdout
+    assert "market: OK schema=2 baseline=stage-0" in status.stdout
     assert "research: OK schema=1 baseline=stage-0" in status.stdout
     assert "live: OK schema=1 baseline=stage-0" in status.stdout
 
