@@ -7,6 +7,9 @@ from typing import Protocol
 from trading_system.domain import (
     Candle1m,
     CandleDataStats,
+    CandleQualityCounts,
+    DataGap,
+    DataQualityReport,
     IngestionCheckpoint,
     Instrument,
     Universe,
@@ -69,6 +72,43 @@ class MarketRepository(Repository, Protocol):
         instrument_uid: str,
         interval: str,
     ) -> IngestionCheckpoint | None: ...
+
+    def scan_data_gaps(
+        self,
+        universe_id: str,
+        instrument_uid: str,
+        *,
+        from_ts: datetime,
+        to_ts: datetime,
+    ) -> tuple[DataGap, ...]: ...
+
+    def replace_data_gaps(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime,
+        to_ts: datetime,
+        gaps: Sequence[DataGap],
+    ) -> None: ...
+
+    def get_data_gaps(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+    ) -> tuple[DataGap, ...]: ...
+
+    def get_candle_quality_counts(
+        self,
+        instrument_uid: str,
+        *,
+        from_ts: datetime,
+        to_ts: datetime,
+        now: datetime,
+    ) -> CandleQualityCounts: ...
+
+    def save_data_quality_report(self, report: DataQualityReport) -> None: ...
 
 
 class ResearchRepository(Repository, Protocol):
