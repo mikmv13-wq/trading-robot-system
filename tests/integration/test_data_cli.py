@@ -101,8 +101,8 @@ def test_cli_data_validate_reports_gap_warning(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "status=WARNING" in result.stdout
-    assert "uid-a: status=WARNING rows=1 gaps=1 missing_minutes=1" in result.stdout
-    assert "uid-b: status=PASS rows=2 gaps=0 missing_minutes=0" in result.stdout
+    assert "uid-a: status=WARNING rows=1/2 coverage=50.00% gaps=1 missing_minutes=1" in result.stdout
+    assert "uid-b: status=PASS rows=2/2 coverage=100.00% gaps=0 missing_minutes=0" in result.stdout
 
 
 def test_cli_backfill_resume_rejects_explicit_range() -> None:
