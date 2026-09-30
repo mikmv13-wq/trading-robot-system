@@ -117,12 +117,10 @@ def test_market_data_client_rejects_non_utc_range() -> None:
         transport=FakeTransport({"candles": []}),
     )
 
-    with pytest.raises(ValueError, match="from_ts must be UTC"):
+    with pytest.raises(ValueError, match="timezone-aware UTC"):
         client.get_candles(
             "uid",
-            datetime(2026, 1, 5, 10, tzinfo=UTC).astimezone(
-                timezone := UTC
-            ).replace(tzinfo=None),
+            datetime(2026, 1, 5, 10),
             datetime(2026, 1, 5, 11, tzinfo=UTC),
         )
 
