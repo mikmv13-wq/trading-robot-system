@@ -1,5 +1,6 @@
 from trading_system.domain.models import (
     Bar,
+    Candle1m,
     Decision,
     Fill,
     Instrument,
@@ -7,10 +8,12 @@ from trading_system.domain.models import (
     OrderSide,
     Position,
     StrategyConfig,
+    Universe,
 )
 
 __all__ = [
     "Bar",
+    "Candle1m",
     "Decision",
     "Fill",
     "Instrument",
@@ -18,4 +21,5 @@ __all__ = [
     "OrderSide",
     "Position",
     "StrategyConfig",
+    "Universe",
 ]
