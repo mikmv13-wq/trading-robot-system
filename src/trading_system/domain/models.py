@@ -98,6 +98,30 @@ class Candle1m(Bar):
 
 
 @dataclass(frozen=True, slots=True)
+class CandleDataStats:
+    instrument_uid: str
+    row_count: int
+    min_timestamp: datetime | None
+    max_timestamp: datetime | None
+
+    def __post_init__(self) -> None:
+        if not self.instrument_uid.strip():
+            raise ValueError("instrument_uid must not be empty")
+        if self.row_count < 0:
+            raise ValueError("row_count must be non-negative")
+        if self.row_count == 0:
+            if self.min_timestamp is not None or self.max_timestamp is not None:
+                raise ValueError("empty candle stats must not have timestamps")
+            return
+        if self.min_timestamp is None or self.max_timestamp is None:
+            raise ValueError("non-empty candle stats must have min/max timestamps")
+        _require_utc(self.min_timestamp, "min_timestamp")
+        _require_utc(self.max_timestamp, "max_timestamp")
+        if self.min_timestamp > self.max_timestamp:
+            raise ValueError("min_timestamp must not be after max_timestamp")
+
+
+@dataclass(frozen=True, slots=True)
 class Position:
     instrument_uid: str
     quantity: int
