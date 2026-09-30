@@ -10,14 +10,16 @@ from trading_system.adapters.duckdb import (
     DuckDBResearchRepository,
 )
 from trading_system.adapters.keychain import KeyringSecretStorage
+from trading_system.adapters.tinvest import TInvestInstrumentsRestClient
 from trading_system.application import (
     BootstrapDatabasesUseCase,
     GetSystemStatusUseCase,
     JobApplicationService,
     JobManager,
+    SyncInstrumentsUseCase,
     TInvestTokenService,
 )
-from trading_system.config import Settings
+from trading_system.config import FileUniverseConfig, Settings
 from trading_system.infrastructure import ThreadJobManager
 from trading_system.ports import SecretStorage
 
@@ -30,6 +32,7 @@ class ApplicationServices:
     get_system_status: GetSystemStatusUseCase
     jobs: JobApplicationService
     tinvest_token: TInvestTokenService
+    sync_instruments: SyncInstrumentsUseCase
     _job_manager: JobManager
 
     def close(self) -> None:
@@ -51,6 +54,11 @@ def build_application_services(
     }
     job_manager = ThreadJobManager(max_workers=2)
     resolved_secret_storage = secret_storage or KeyringSecretStorage()
+    token_service = TInvestTokenService(resolved_secret_storage)
+    market_repository = repositories["market"]
+    if not isinstance(market_repository, DuckDBMarketRepository):
+        raise TypeError("market repository must be DuckDBMarketRepository")
+    instruments_client = TInvestInstrumentsRestClient(token_service.get_token)
 
     return ApplicationServices(
         bootstrap_databases=BootstrapDatabasesUseCase(
@@ -58,6 +66,11 @@ def build_application_services(
         ),
         get_system_status=GetSystemStatusUseCase(repositories),
         jobs=JobApplicationService(job_manager),
-        tinvest_token=TInvestTokenService(resolved_secret_storage),
+        tinvest_token=token_service,
+        sync_instruments=SyncInstrumentsUseCase(
+            FileUniverseConfig(settings.universe_config_path),
+            instruments_client,
+            market_repository,
+        ),
         _job_manager=job_manager,
     )
