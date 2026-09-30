@@ -15,8 +15,10 @@ from trading_system.adapters.tinvest import (
     TInvestMarketDataRestClient,
 )
 from trading_system.application import (
+    BackfillHistoricalCandlesUseCase,
     BootstrapDatabasesUseCase,
     GetSystemStatusUseCase,
+    HistoricalBackfillService,
     JobApplicationService,
     JobManager,
     SyncInstrumentsUseCase,
@@ -37,6 +39,7 @@ class ApplicationServices:
     tinvest_token: TInvestTokenService
     sync_instruments: SyncInstrumentsUseCase
     tinvest_market_data: TInvestMarketDataClient
+    historical_backfill: HistoricalBackfillService
     _job_manager: JobManager
 
     def close(self) -> None:
@@ -64,6 +67,10 @@ def build_application_services(
         raise TypeError("market repository must be DuckDBMarketRepository")
     instruments_client = TInvestInstrumentsRestClient(token_service.get_token)
     market_data_client = TInvestMarketDataRestClient(token_service.get_token)
+    backfill_use_case = BackfillHistoricalCandlesUseCase(
+        market_data_client,
+        market_repository,
+    )
 
     return ApplicationServices(
         bootstrap_databases=BootstrapDatabasesUseCase(
@@ -73,6 +80,10 @@ def build_application_services(
         jobs=JobApplicationService(job_manager),
         tinvest_token=token_service,
         tinvest_market_data=market_data_client,
+        historical_backfill=HistoricalBackfillService(
+            job_manager,
+            backfill_use_case,
+        ),
         sync_instruments=SyncInstrumentsUseCase(
             FileUniverseConfig(settings.universe_config_path),
             instruments_client,
