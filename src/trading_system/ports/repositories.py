@@ -4,7 +4,13 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
-from trading_system.domain import Candle1m, CandleDataStats, Instrument, Universe
+from trading_system.domain import (
+    Candle1m,
+    CandleDataStats,
+    IngestionCheckpoint,
+    Instrument,
+    Universe,
+)
 
 
 class Repository(Protocol):
@@ -55,6 +61,14 @@ class MarketRepository(Repository, Protocol):
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
     ) -> CandleDataStats: ...
+
+    def save_ingestion_checkpoint(self, checkpoint: IngestionCheckpoint) -> None: ...
+
+    def get_ingestion_checkpoint(
+        self,
+        instrument_uid: str,
+        interval: str,
+    ) -> IngestionCheckpoint | None: ...
 
 
 class ResearchRepository(Repository, Protocol):
