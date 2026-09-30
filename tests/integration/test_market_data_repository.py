@@ -6,7 +6,14 @@ from pathlib import Path
 from trading_system.adapters.duckdb import DuckDBBootstrapper, DuckDBMarketRepository
 from trading_system.application import BootstrapDatabasesUseCase
 from trading_system.config import Settings
-from trading_system.domain import Candle1m, CandleDataStats, Instrument, Universe
+from trading_system.domain import (
+    Candle1m,
+    CandleDataStats,
+    IngestionCheckpoint,
+    IngestionStatus,
+    Instrument,
+    Universe,
+)
 
 
 def _bootstrap(tmp_path: Path) -> Settings:
@@ -217,3 +224,31 @@ def test_candle_batch_is_atomic_on_foreign_key_error(tmp_path: Path) -> None:
         raise AssertionError("batch with invalid instrument UID must fail")
 
     assert repository.get_candle_stats("uid-sber").row_count == 0
+
+
+def test_ingestion_checkpoint_round_trip(tmp_path: Path) -> None:
+    settings = _bootstrap(tmp_path)
+    repository = DuckDBMarketRepository(settings.market_db_path)
+    repository.upsert_instrument(_instrument())
+    checkpoint = IngestionCheckpoint(
+        instrument_uid="uid-sber",
+        interval="1m",
+        requested_from=datetime(2026, 1, 1, tzinfo=UTC),
+        requested_to=datetime(2026, 1, 4, tzinfo=UTC),
+        completed_until=datetime(2026, 1, 2, tzinfo=UTC),
+        status=IngestionStatus.FAILED,
+        last_error="RuntimeError: broker unavailable",
+    )
+
+    repository.save_ingestion_checkpoint(checkpoint)
+    loaded = repository.get_ingestion_checkpoint("uid-sber", "1m")
+
+    assert loaded is not None
+    assert loaded.instrument_uid == checkpoint.instrument_uid
+    assert loaded.interval == checkpoint.interval
+    assert loaded.requested_from == checkpoint.requested_from
+    assert loaded.requested_to == checkpoint.requested_to
+    assert loaded.completed_until == checkpoint.completed_until
+    assert loaded.status is IngestionStatus.FAILED
+    assert loaded.last_error == checkpoint.last_error
+    assert loaded.updated_at is not None
