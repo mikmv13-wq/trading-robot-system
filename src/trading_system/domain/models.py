@@ -32,6 +32,10 @@ class Instrument:
     lot_size: int
     name: str | None = None
     currency: str | None = None
+    figi: str | None = None
+    exchange: str | None = None
+    instrument_type: str | None = None
+    active: bool = True
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip():
@@ -40,6 +44,23 @@ class Instrument:
             raise ValueError("ticker must not be empty")
         if self.lot_size <= 0:
             raise ValueError("lot_size must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class Universe:
+    universe_id: str
+    name: str
+    instrument_uids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.universe_id.strip():
+            raise ValueError("universe_id must not be empty")
+        if not self.name.strip():
+            raise ValueError("name must not be empty")
+        if any(not uid.strip() for uid in self.instrument_uids):
+            raise ValueError("instrument_uids must not contain empty values")
+        if len(set(self.instrument_uids)) != len(self.instrument_uids):
+            raise ValueError("instrument_uids must not contain duplicates")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +86,14 @@ class Bar:
             raise ValueError("high must not be below OHLC values")
         if self.volume < 0:
             raise ValueError("volume must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class Candle1m(Bar):
+    def __post_init__(self) -> None:
+        Bar.__post_init__(self)
+        if self.ts.second != 0 or self.ts.microsecond != 0:
+            raise ValueError("1m candle timestamp must be aligned to a minute boundary")
 
 
 @dataclass(frozen=True, slots=True)
