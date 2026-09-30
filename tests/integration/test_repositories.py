@@ -42,7 +42,7 @@ def test_repositories_report_health_schema_and_metadata(tmp_path: Path) -> None:
         repository.healthcheck()
 
         assert repository.database_kind == expected_kind
-        assert repository.schema_version() == 1
+        assert repository.schema_version() == (2 if expected_kind == "market" else 1)
         assert repository.metadata() == {
             "database_kind": expected_kind,
             "schema_baseline": "stage-0",
