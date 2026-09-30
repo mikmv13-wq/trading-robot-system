@@ -87,5 +87,5 @@ class MigrationRunner:
         except Exception as exc:
             self._connection.execute("ROLLBACK")
             raise MigrationError(
-                f"failed to apply migration {migration.version}_{migration.name}"
+                f"failed to apply migration {migration.version:03d}_{migration.name}"
             ) from exc

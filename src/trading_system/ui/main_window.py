@@ -96,6 +96,7 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, entry.key)
             self._navigation.addItem(item)
 
+            page: QWidget
             if entry.key == "dashboard":
                 page = DashboardPage(get_system_status, jobs)
             elif entry.key == "settings":

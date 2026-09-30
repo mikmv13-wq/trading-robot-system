@@ -21,12 +21,13 @@ def _settings(
     data_dir: Path | None = None,
     sql_dir: Path | None = None,
 ) -> Settings:
-    overrides: dict[str, object] = {}
+    if data_dir is not None and sql_dir is not None:
+        return Settings(data_dir=data_dir, sql_dir=sql_dir)
     if data_dir is not None:
-        overrides["data_dir"] = data_dir
+        return Settings(data_dir=data_dir)
     if sql_dir is not None:
-        overrides["sql_dir"] = sql_dir
-    return Settings(**overrides)
+        return Settings(sql_dir=sql_dir)
+    return Settings()
 
 
 @app.callback()
