@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -13,7 +14,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from trading_system.application import GetSystemStatusUseCase, HealthStatus
+from trading_system.application import (
+    GetSystemStatusUseCase,
+    HealthStatus,
+    JobApplicationService,
+    JobStatus,
+)
 
 
 class PageHeader(QWidget):
@@ -63,11 +69,14 @@ class DashboardPage(QWidget):
     def __init__(
         self,
         get_system_status: GetSystemStatusUseCase,
+        jobs: JobApplicationService,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("page-dashboard")
         self._get_system_status = get_system_status
+        self._jobs = jobs
+        self._current_job_id: str | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -118,7 +127,44 @@ class DashboardPage(QWidget):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
 
         layout.addWidget(self._database_table)
+
+        job_title = QLabel("Background jobs")
+        job_title.setStyleSheet("font-size: 16px; font-weight: 600;")
+        layout.addWidget(job_title)
+
+        job_controls = QHBoxLayout()
+        self._run_job_button = QPushButton("Run test job")
+        self._run_job_button.setObjectName("runTestJob")
+        self._run_job_button.clicked.connect(self._start_test_job)
+        job_controls.addWidget(self._run_job_button)
+
+        self._cancel_job_button = QPushButton("Cancel")
+        self._cancel_job_button.setObjectName("cancelTestJob")
+        self._cancel_job_button.setEnabled(False)
+        self._cancel_job_button.clicked.connect(self._cancel_test_job)
+        job_controls.addWidget(self._cancel_job_button)
+        job_controls.addStretch(1)
+        layout.addLayout(job_controls)
+
+        self._job_status = QLabel("IDLE")
+        self._job_status.setObjectName("jobStatus")
+        layout.addWidget(self._job_status)
+
+        self._job_progress = QProgressBar()
+        self._job_progress.setObjectName("jobProgress")
+        self._job_progress.setRange(0, 100)
+        self._job_progress.setValue(0)
+        layout.addWidget(self._job_progress)
+
+        self._job_message = QLabel("No background job running.")
+        self._job_message.setObjectName("jobMessage")
+        self._job_message.setWordWrap(True)
+        layout.addWidget(self._job_message)
         layout.addStretch(1)
+
+        self._job_timer = QTimer(self)
+        self._job_timer.setInterval(100)
+        self._job_timer.timeout.connect(self._poll_job)
 
         self.refresh_status()
 
@@ -141,3 +187,39 @@ class DashboardPage(QWidget):
                 if database.status is HealthStatus.ERROR and database.error:
                     item.setToolTip(database.error)
                 self._database_table.setItem(row, column, item)
+
+    def _start_test_job(self) -> None:
+        self._current_job_id = self._jobs.start_test_job()
+        self._run_job_button.setEnabled(False)
+        self._cancel_job_button.setEnabled(True)
+        self._job_progress.setValue(0)
+        self._job_status.setText(JobStatus.PENDING.value)
+        self._job_message.setText("Test job submitted.")
+        self._job_timer.start()
+        self._poll_job()
+
+    def _cancel_test_job(self) -> None:
+        if self._current_job_id is None:
+            return
+        self._jobs.cancel(self._current_job_id)
+        self._poll_job()
+
+    def _poll_job(self) -> None:
+        if self._current_job_id is None:
+            return
+
+        snapshot = self._jobs.get(self._current_job_id)
+        self._job_status.setText(snapshot.status.value)
+        self._job_progress.setValue(round(snapshot.progress * 100))
+
+        message = snapshot.message
+        if snapshot.error:
+            message = snapshot.error
+        elif snapshot.status is JobStatus.COMPLETED and snapshot.result is not None:
+            message = str(snapshot.result)
+        self._job_message.setText(message or "")
+
+        if snapshot.status.terminal:
+            self._job_timer.stop()
+            self._run_job_button.setEnabled(True)
+            self._cancel_job_button.setEnabled(False)

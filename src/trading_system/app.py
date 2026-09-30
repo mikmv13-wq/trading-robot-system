@@ -5,18 +5,19 @@ from collections.abc import Sequence
 
 from PySide6.QtWidgets import QApplication
 
-from trading_system.composition import build_application_services
+from trading_system.composition import ApplicationServices, build_application_services
 from trading_system.config import Settings
 from trading_system.observability import configure_logging
 from trading_system.ui import MainWindow
 
 
-def create_main_window(settings: Settings | None = None) -> MainWindow:
-    """Build the desktop window through the shared application composition root."""
+def create_main_window(services: ApplicationServices) -> MainWindow:
+    """Build the desktop window using already-composed application services."""
 
-    resolved_settings = settings or Settings()
-    services = build_application_services(resolved_settings)
-    return MainWindow(services.get_system_status)
+    return MainWindow(
+        services.get_system_status,
+        services.jobs,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -29,7 +30,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     qt_app.setApplicationName("Trading Robot System")
     qt_app.setOrganizationName("Trading Robot System")
 
-    window = create_main_window(settings)
+    services = build_application_services(settings)
+    qt_app.aboutToQuit.connect(services.close)
+
+    window = create_main_window(services)
     window.show()
     return qt_app.exec()
 
