@@ -244,8 +244,42 @@ def test_resume_skips_completed_instrument(tmp_path: Path) -> None:
 
     assert resumed_client.calls == []
     assert result.total_requests == 0
-    assert all(
-        repository.get_ingestion_checkpoint(uid, "1m").status
-        is IngestionStatus.COMPLETED
-        for uid in ("uid-a", "uid-b")
+    for uid in ("uid-a", "uid-b"):
+        checkpoint = repository.get_ingestion_checkpoint(uid, "1m")
+        assert checkpoint is not None
+        assert checkpoint.status is IngestionStatus.COMPLETED
+
+
+def test_cancelled_backfill_keeps_resumable_checkpoint(tmp_path: Path) -> None:
+    repository = _bootstrap(tmp_path)
+    market_data = SlowFakeMarketDataClient()
+    manager = ThreadJobManager(max_workers=1)
+    service = HistoricalBackfillService(
+        manager,
+        BackfillHistoricalCandlesUseCase(market_data, repository),
     )
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+
+    try:
+        job_id = service.start(
+            "default",
+            from_ts=start,
+            to_ts=start + timedelta(days=5),
+        )
+        deadline = time.time() + 5
+        while not market_data.calls and time.time() < deadline:
+            time.sleep(0.01)
+        manager.cancel(job_id)
+
+        snapshot = manager.get(job_id)
+        while not snapshot.status.terminal and time.time() < deadline:
+            time.sleep(0.01)
+            snapshot = manager.get(job_id)
+
+        checkpoint = repository.get_ingestion_checkpoint("uid-a", "1m")
+        assert checkpoint is not None
+        assert checkpoint.status is IngestionStatus.CANCELLED
+        assert checkpoint.requested_from == start
+        assert checkpoint.requested_to == start + timedelta(days=5)
+    finally:
+        manager.shutdown(wait=True, cancel_running=True)
