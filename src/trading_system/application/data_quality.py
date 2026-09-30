@@ -61,6 +61,11 @@ class ValidateMarketDataUseCase:
         started_at = self._now_provider().astimezone(UTC)
         now = started_at
         instruments: list[InstrumentDataQuality] = []
+        expected_minutes = self._market_repository.count_observed_market_minutes(
+            universe_id,
+            from_ts=resolved_from,
+            to_ts=resolved_to,
+        )
 
         for instrument_uid in universe.instrument_uids:
             stats = self._market_repository.get_candle_stats(
@@ -90,6 +95,22 @@ class ValidateMarketDataUseCase:
                 int((gap.end_ts - gap.start_ts).total_seconds() // 60)
                 for gap in gaps
             )
+            coverage_ratio = (
+                0.0
+                if expected_minutes == 0
+                else min(1.0, stats.row_count / expected_minutes)
+            )
+            anomaly_reasons = self._anomaly_reasons(
+                row_count=stats.row_count,
+                expected_minutes=expected_minutes,
+                gap_count=len(gaps),
+                missing_minutes=missing_minutes,
+                incomplete_count=quality.incomplete_count,
+                future_count=quality.future_count,
+                invalid_ohlc_count=quality.invalid_ohlc_count,
+                negative_volume_count=quality.negative_volume_count,
+                off_minute_count=quality.off_minute_count,
+            )
             status = self._instrument_status(
                 stats.row_count,
                 gap_count=len(gaps),
@@ -106,6 +127,9 @@ class ValidateMarketDataUseCase:
                     stats=stats,
                     gap_count=len(gaps),
                     missing_minutes=missing_minutes,
+                    expected_minutes=expected_minutes,
+                    coverage_ratio=coverage_ratio,
+                    anomaly_reasons=anomaly_reasons,
                     quality=quality,
                 )
             )
@@ -175,6 +199,40 @@ class ValidateMarketDataUseCase:
         inferred_to = inferred_max + timedelta(minutes=1)
         self._require_range(inferred_from, inferred_to)
         return inferred_from, inferred_to
+
+    @staticmethod
+    def _anomaly_reasons(
+        *,
+        row_count: int,
+        expected_minutes: int,
+        gap_count: int,
+        missing_minutes: int,
+        incomplete_count: int,
+        future_count: int,
+        invalid_ohlc_count: int,
+        negative_volume_count: int,
+        off_minute_count: int,
+    ) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if row_count == 0:
+            reasons.append("no candles in validation range")
+        if expected_minutes == 0:
+            reasons.append("no observed market activity in universe")
+        if gap_count > 0:
+            reasons.append(
+                f"{missing_minutes} missing minute(s) during observed market activity"
+            )
+        if incomplete_count > 0:
+            reasons.append(f"{incomplete_count} incomplete candle(s)")
+        if future_count > 0:
+            reasons.append(f"{future_count} future candle(s)")
+        if invalid_ohlc_count > 0:
+            reasons.append(f"{invalid_ohlc_count} invalid OHLC candle(s)")
+        if negative_volume_count > 0:
+            reasons.append(f"{negative_volume_count} negative-volume candle(s)")
+        if off_minute_count > 0:
+            reasons.append(f"{off_minute_count} off-minute candle(s)")
+        return tuple(reasons)
 
     @staticmethod
     def _instrument_status(
