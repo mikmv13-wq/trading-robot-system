@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from trading_system.adapters.duckdb import DuckDBBootstrapper, DuckDBMarketRepository
+from trading_system.adapters.duckdb import (
+    DuckDBBootstrapper,
+    DuckDBMarketRepository,
+)
 from trading_system.application import (
     BackfillHistoricalCandlesUseCase,
     BootstrapDatabasesUseCase,
