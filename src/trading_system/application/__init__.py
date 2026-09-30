@@ -1,4 +1,10 @@
 from trading_system.application.bootstrap import BootstrapDatabasesUseCase, BootstrapResult
+from trading_system.application.instrument_sync import (
+    InstrumentSyncError,
+    InstrumentSyncIssue,
+    InstrumentSyncResult,
+    SyncInstrumentsUseCase,
+)
 from trading_system.application.job_service import JobApplicationService
 from trading_system.application.jobs import (
     JobContext,
@@ -26,12 +32,16 @@ __all__ = [
     "DatabaseStatus",
     "GetSystemStatusUseCase",
     "HealthStatus",
+    "InstrumentSyncError",
+    "InstrumentSyncIssue",
+    "InstrumentSyncResult",
     "JobApplicationService",
     "JobContext",
     "JobManager",
     "JobSnapshot",
     "JobStatus",
     "JobTask",
+    "SyncInstrumentsUseCase",
     "SystemStatus",
     "TInvestTokenService",
     "TInvestTokenStatus",
