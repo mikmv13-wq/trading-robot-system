@@ -1,4 +1,14 @@
 from trading_system.application.bootstrap import BootstrapDatabasesUseCase, BootstrapResult
+from trading_system.application.historical_backfill import (
+    BackfillChunk,
+    BackfillHistoricalCandlesUseCase,
+    BackfillUniverseNotFoundError,
+    ChunkPlanner,
+    HistoricalBackfillError,
+    HistoricalBackfillResult,
+    HistoricalBackfillService,
+    InstrumentBackfillResult,
+)
 from trading_system.application.instrument_sync import (
     InstrumentSyncError,
     InstrumentSyncIssue,
@@ -29,9 +39,17 @@ from trading_system.application.tinvest_token import (
 __all__ = [
     "BootstrapDatabasesUseCase",
     "BootstrapResult",
+    "BackfillChunk",
+    "BackfillHistoricalCandlesUseCase",
+    "BackfillUniverseNotFoundError",
+    "ChunkPlanner",
+    "HistoricalBackfillError",
+    "HistoricalBackfillResult",
+    "HistoricalBackfillService",
     "DatabaseStatus",
     "GetSystemStatusUseCase",
     "HealthStatus",
+    "InstrumentBackfillResult",
     "InstrumentSyncError",
     "InstrumentSyncIssue",
     "InstrumentSyncResult",
