@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
-from trading_system.domain import Bar, Instrument
+from trading_system.domain import Candle1m, Instrument
 
 
 class TInvestInstrumentsClient(Protocol):
@@ -12,11 +12,9 @@ class TInvestInstrumentsClient(Protocol):
 
 
 class TInvestMarketDataClient(Protocol):
-    """Port for broker market data; concrete candles adapter is implemented later."""
-
     def get_candles(
         self,
         instrument_uid: str,
         from_ts: datetime,
         to_ts: datetime,
-    ) -> Sequence[Bar]: ...
+    ) -> Sequence[Candle1m]: ...
