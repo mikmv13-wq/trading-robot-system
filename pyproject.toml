@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
     "duckdb>=1.4,<2.0",
     "pydantic-settings>=2.10,<3.0",
+    "PySide6>=6.8,<7.0",
     "typer>=0.20,<1.0",
 ]
 
@@ -21,12 +22,12 @@ dev = [
     "pytest-cov>=5,<8",
     "ruff>=0.12,<1.0",
 ]
-gui = [
-    "PySide6>=6.8,<7.0",
-]
 
 [project.scripts]
 trader = "trading_system.cli:app"
+
+[project.gui-scripts]
+trader-desktop = "trading_system.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trading_system"]
