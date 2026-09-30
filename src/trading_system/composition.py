@@ -76,8 +76,9 @@ def build_application_services(
         market_repository,
     )
     jobs_service = JobApplicationService(job_manager)
+    universe_config = FileUniverseConfig(settings.universe_config_path)
     sync_use_case = SyncInstrumentsUseCase(
-        FileUniverseConfig(settings.universe_config_path),
+        universe_config,
         instruments_client,
         market_repository,
     )
@@ -92,6 +93,7 @@ def build_application_services(
         validation_use_case,
         jobs_service,
         market_repository,
+        universe_config,
     )
 
     return ApplicationServices(
