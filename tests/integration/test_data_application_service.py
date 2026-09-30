@@ -5,7 +5,7 @@ from pathlib import Path
 
 from trading_system.adapters.duckdb import DuckDBBootstrapper, DuckDBMarketRepository
 from trading_system.application import BootstrapDatabasesUseCase, DataApplicationService
-from trading_system.config import Settings
+from trading_system.config import Settings, UniverseDefinition
 from trading_system.domain import (
     Candle1m,
     DataGap,
@@ -33,6 +33,14 @@ class _UnusedBackfill:
 class _UnusedValidation:
     def execute(self, universe_id: str = "default", **kwargs: object) -> object:
         raise AssertionError("not used")
+
+
+class _UniverseConfig:
+    def list_universes(self) -> tuple[UniverseDefinition, ...]:
+        return (UniverseDefinition("default", "Default", ("AAA",)),)
+
+    def get_universe(self, universe_id: str) -> UniverseDefinition:
+        return self.list_universes()[0]
 
 
 class _UnusedJobs:
@@ -120,6 +128,7 @@ def test_data_application_status_aggregates_repository_state(tmp_path: Path) -> 
         _UnusedValidation(),  # type: ignore[arg-type]
         _UnusedJobs(),  # type: ignore[arg-type]
         repository,
+        _UniverseConfig(),
     )
     status = service.get_status("default")
 
@@ -133,3 +142,4 @@ def test_data_application_status_aggregates_repository_state(tmp_path: Path) -> 
     assert item.missing_minutes == 1
     assert item.checkpoint_status is IngestionStatus.RUNNING
     assert item.completed_until == start + timedelta(hours=12)
+    assert item.progress == 0.5
