@@ -28,14 +28,15 @@ def _settings(
     sql_dir: Path | None = None,
     config_dir: Path | None = None,
 ) -> Settings:
-    values: dict[str, Path] = {}
+    settings = Settings()
+    updates: dict[str, object] = {}
     if data_dir is not None:
-        values["data_dir"] = data_dir
+        updates["data_dir"] = data_dir
     if sql_dir is not None:
-        values["sql_dir"] = sql_dir
+        updates["sql_dir"] = sql_dir
     if config_dir is not None:
-        values["config_dir"] = config_dir
-    return Settings(**values)
+        updates["config_dir"] = config_dir
+    return settings.model_copy(update=updates)
 
 
 def _close(services: ApplicationServices) -> None:
