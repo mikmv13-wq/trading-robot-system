@@ -17,6 +17,7 @@ from trading_system.adapters.tinvest import (
 from trading_system.application import (
     BackfillHistoricalCandlesUseCase,
     BootstrapDatabasesUseCase,
+    DataApplicationService,
     GetSystemStatusUseCase,
     HistoricalBackfillService,
     JobApplicationService,
@@ -42,6 +43,7 @@ class ApplicationServices:
     tinvest_market_data: TInvestMarketDataClient
     historical_backfill: HistoricalBackfillService
     validate_market_data: ValidateMarketDataUseCase
+    data: DataApplicationService
     _job_manager: JobManager
 
     def close(self) -> None:
@@ -73,24 +75,36 @@ def build_application_services(
         market_data_client,
         market_repository,
     )
+    jobs_service = JobApplicationService(job_manager)
+    sync_use_case = SyncInstrumentsUseCase(
+        FileUniverseConfig(settings.universe_config_path),
+        instruments_client,
+        market_repository,
+    )
+    validation_use_case = ValidateMarketDataUseCase(market_repository)
+    backfill_service = HistoricalBackfillService(
+        job_manager,
+        backfill_use_case,
+    )
+    data_service = DataApplicationService(
+        sync_use_case,
+        backfill_service,
+        validation_use_case,
+        jobs_service,
+        market_repository,
+    )
 
     return ApplicationServices(
         bootstrap_databases=BootstrapDatabasesUseCase(
             DuckDBBootstrapper(settings, connection_factory)
         ),
         get_system_status=GetSystemStatusUseCase(repositories),
-        jobs=JobApplicationService(job_manager),
+        jobs=jobs_service,
         tinvest_token=token_service,
         tinvest_market_data=market_data_client,
-        validate_market_data=ValidateMarketDataUseCase(market_repository),
-        historical_backfill=HistoricalBackfillService(
-            job_manager,
-            backfill_use_case,
-        ),
-        sync_instruments=SyncInstrumentsUseCase(
-            FileUniverseConfig(settings.universe_config_path),
-            instruments_client,
-            market_repository,
-        ),
+        validate_market_data=validation_use_case,
+        historical_backfill=backfill_service,
+        sync_instruments=sync_use_case,
+        data=data_service,
         _job_manager=job_manager,
     )
