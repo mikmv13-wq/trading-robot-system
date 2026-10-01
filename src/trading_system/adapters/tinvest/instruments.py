@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import ssl
 import time
 from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import truststore
 
 from trading_system.domain import Instrument
 
@@ -44,6 +47,7 @@ class UrllibJsonHttpTransport:
         min_request_interval_seconds: float = 0.05,
         sleeper: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
@@ -60,6 +64,7 @@ class UrllibJsonHttpTransport:
         self._min_request_interval_seconds = min_request_interval_seconds
         self._sleeper = sleeper
         self._monotonic = monotonic
+        self._ssl_context = ssl_context or self._system_ssl_context()
         self._last_request_started_at: float | None = None
 
     def post(
@@ -82,7 +87,11 @@ class UrllibJsonHttpTransport:
         for attempt in range(1, self._max_attempts + 1):
             self._throttle()
             try:
-                with urlopen(request, timeout=self._timeout_seconds) as response:
+                with urlopen(
+                    request,
+                    timeout=self._timeout_seconds,
+                    context=self._ssl_context,
+                ) as response:
                     decoded: object = json.loads(response.read().decode("utf-8"))
             except HTTPError as exc:
                 detail = self._http_error_detail(exc)
@@ -96,7 +105,11 @@ class UrllibJsonHttpTransport:
                 raise TInvestResponseError(
                     f"T-Invest request failed with HTTP {exc.code}: {detail}"
                 ) from exc
+            except ssl.SSLCertVerificationError as exc:
+                raise self._certificate_error(exc) from exc
             except (URLError, TimeoutError) as exc:
+                if self._is_certificate_verification_error(exc):
+                    raise self._certificate_error(exc) from exc
                 if attempt < self._max_attempts:
                     last_error = exc
                     self._sleep_before_retry(attempt)
@@ -115,6 +128,44 @@ class UrllibJsonHttpTransport:
 
         raise TInvestResponseError(
             f"T-Invest request failed after {self._max_attempts} attempts: {last_error}"
+        )
+
+    @staticmethod
+    def _system_ssl_context() -> ssl.SSLContext:
+        # Truststore delegates certificate validation to the operating system.
+        # On Windows this uses CryptoAPI and therefore respects certificates
+        # installed by corporate proxies, antivirus products, and administrators.
+        return cast(
+            ssl.SSLContext,
+            truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+        )
+
+    @staticmethod
+    def _is_certificate_verification_error(
+        error: URLError | TimeoutError,
+    ) -> bool:
+        if isinstance(error, URLError):
+            reason = error.reason
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                return True
+            return "CERTIFICATE_VERIFY_FAILED" in str(reason).upper()
+        return False
+
+    @staticmethod
+    def _certificate_error(
+        error: BaseException,
+    ) -> TInvestResponseError:
+        detail = (
+            str(error.reason)
+            if isinstance(error, URLError) and error.reason is not None
+            else str(error)
+        )
+        return TInvestResponseError(
+            "T-Invest TLS certificate verification failed using the "
+            f"operating-system trust store: {detail}. "
+            "Install the proxy/antivirus root certificate into the Windows "
+            "Trusted Root Certification Authorities store, then restart "
+            "Trading Robot System."
         )
 
     def _throttle(self) -> None:
