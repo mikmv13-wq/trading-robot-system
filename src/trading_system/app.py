@@ -12,7 +12,10 @@ from trading_system.ui import MainWindow
 from trading_system.ui.theme import apply_theme
 
 
-def create_main_window(services: ApplicationServices) -> MainWindow:
+def create_main_window(
+    services: ApplicationServices,
+    settings: Settings | None = None,
+) -> MainWindow:
     """Build the desktop window using already-composed application services."""
 
     return MainWindow(
@@ -20,6 +23,7 @@ def create_main_window(services: ApplicationServices) -> MainWindow:
         services.jobs,
         services.tinvest_token,
         services.data,
+        settings,
     )
 
 
@@ -37,7 +41,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     services = build_application_services(settings)
     qt_app.aboutToQuit.connect(services.close)
 
-    window = create_main_window(services)
+    window = create_main_window(services, settings)
     window.show()
     return qt_app.exec()
 
