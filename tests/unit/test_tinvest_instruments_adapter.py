@@ -1,63 +1,85 @@
-import ssl
-from collections.abc import Mapping
-from io import BytesIO
-from urllib.error import HTTPError, URLError
+import os
+from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
 from trading_system.adapters.tinvest import (
     TInvestAuthenticationError,
-    TInvestInstrumentsRestClient,
-    TInvestResponseError,
-    UrllibJsonHttpTransport,
+    TInvestGrpcSession,
+    TInvestInstrumentsGrpcClient,
 )
+from trading_system.adapters.tinvest.sdk import InstrumentStatus
 from trading_system.domain import Instrument
 
 
-class FakeTransport:
-    def __init__(self, response: Mapping[str, object]) -> None:
-        self.response = response
-        self.url: str | None = None
-        self.headers: Mapping[str, str] | None = None
-        self.payload: Mapping[str, object] | None = None
+@dataclass
+class FakeShare:
+    uid: str = "uid-sber"
+    ticker: str = "SBER"
+    lot: int = 10
+    name: str = "Sberbank"
+    currency: str = "rub"
+    figi: str = "BBG004730N88"
+    exchange: str = "MOEX"
+    api_trade_available_flag: bool = True
 
-    def post(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str],
-        payload: Mapping[str, object],
-    ) -> Mapping[str, object]:
-        self.url = url
-        self.headers = headers
-        self.payload = payload
+
+@dataclass
+class FakeSharesResponse:
+    instruments: list[FakeShare]
+
+
+class FakeInstrumentsService:
+    def __init__(self, response: FakeSharesResponse) -> None:
+        self.response = response
+        self.instrument_status: object | None = None
+
+    def shares(self, *, instrument_status: object) -> FakeSharesResponse:
+        self.instrument_status = instrument_status
         return self.response
 
 
-def test_instruments_rest_client_maps_share_response() -> None:
-    transport = FakeTransport(
-        {
-            "instruments": [
-                {
-                    "uid": "uid-sber",
-                    "ticker": "SBER",
-                    "lot": 10,
-                    "name": "Sberbank",
-                    "currency": "rub",
-                    "figi": "BBG004730N88",
-                    "exchange": "MOEX",
-                    "apiTradeAvailableFlag": True,
-                }
-            ]
-        }
-    )
-    client = TInvestInstrumentsRestClient(
-        lambda: "secret-token",
-        base_url="https://example.test/rest",
-        transport=transport,
-    )
+class FakeSdkClient:
+    def __init__(self, instruments: FakeInstrumentsService) -> None:
+        self.instruments = instruments
 
-    assert client.list_shares() == (
+
+class FakeClientManager:
+    def __init__(self, client: FakeSdkClient, exits: list[bool]) -> None:
+        self._client = client
+        self._exits = exits
+
+    def __enter__(self) -> FakeSdkClient:
+        return self._client
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self._exits.append(True)
+
+
+def _factory(
+    client: FakeSdkClient,
+    tokens: list[str],
+    exits: list[bool],
+) -> Any:
+    def create(token: str) -> FakeClientManager:
+        tokens.append(token)
+        return FakeClientManager(client, exits)
+
+    return create
+
+
+def test_instruments_grpc_client_maps_sdk_share_response_and_reuses_channel() -> None:
+    service = FakeInstrumentsService(FakeSharesResponse([FakeShare()]))
+    tokens: list[str] = []
+    exits: list[bool] = []
+    session = TInvestGrpcSession(
+        lambda: "secret-token",
+        client_factory=_factory(FakeSdkClient(service), tokens, exits),
+    )
+    client = TInvestInstrumentsGrpcClient(session)
+
+    expected = (
         Instrument(
             instrument_uid="uid-sber",
             ticker="SBER",
@@ -70,210 +92,45 @@ def test_instruments_rest_client_maps_share_response() -> None:
             active=True,
         ),
     )
-    assert transport.url is not None and transport.url.endswith(
-        "/tinkoff.public.invest.api.contract.v1.InstrumentsService/Shares"
+    assert client.list_shares() == expected
+    assert client.list_shares() == expected
+    assert service.instrument_status == InstrumentStatus.INSTRUMENT_STATUS_BASE
+    assert tokens == ["secret-token"]
+    assert exits == []
+
+    session.close()
+    assert exits == [True]
+
+
+def test_grpc_session_reopens_channel_when_token_changes() -> None:
+    service = FakeInstrumentsService(FakeSharesResponse([]))
+    token = ["token-a"]
+    tokens: list[str] = []
+    exits: list[bool] = []
+    session = TInvestGrpcSession(
+        lambda: token[0],
+        client_factory=_factory(FakeSdkClient(service), tokens, exits),
     )
-    assert transport.headers == {"Authorization": "Bearer secret-token"}
-    assert transport.payload == {"instrumentStatus": "INSTRUMENT_STATUS_BASE"}
+    client = TInvestInstrumentsGrpcClient(session)
+
+    assert client.list_shares() == ()
+    token[0] = "token-b"
+    assert client.list_shares() == ()
+
+    assert tokens == ["token-a", "token-b"]
+    assert exits == [True]
 
 
-def test_instruments_rest_client_requires_token() -> None:
-    client = TInvestInstrumentsRestClient(
+def test_instruments_grpc_client_requires_token() -> None:
+    service = FakeInstrumentsService(FakeSharesResponse([]))
+    session = TInvestGrpcSession(
         lambda: None,
-        transport=FakeTransport({"instruments": []}),
+        client_factory=_factory(FakeSdkClient(service), [], []),
     )
 
     with pytest.raises(TInvestAuthenticationError, match="not configured"):
-        client.list_shares()
+        TInvestInstrumentsGrpcClient(session).list_shares()
 
 
-def test_http_transport_retries_transient_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    attempts = 0
-    sleeps: list[float] = []
-
-    class FakeResponse:
-        def __enter__(self) -> "FakeResponse":
-            return self
-
-        def __exit__(
-            self,
-            exc_type: object,
-            exc: object,
-            traceback: object,
-        ) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return b'{"instruments": []}'
-
-    def fake_urlopen(request: object, timeout: float, context: object) -> FakeResponse:
-        nonlocal attempts
-        attempts += 1
-        if attempts < 3:
-            raise URLError("temporary DNS failure")
-        return FakeResponse()
-
-    monkeypatch.setattr(
-        "trading_system.adapters.tinvest.instruments.urlopen",
-        fake_urlopen,
-    )
-
-    transport = UrllibJsonHttpTransport(
-        max_attempts=3,
-        backoff_seconds=0.1,
-        min_request_interval_seconds=0.0,
-        sleeper=sleeps.append,
-    )
-
-    assert transport.post(
-        "https://example.test",
-        headers={},
-        payload={},
-    ) == {"instruments": []}
-    assert attempts == 3
-    assert sleeps == [0.1, 0.2]
-
-
-def test_http_transport_retries_429_using_retry_after(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    attempts = 0
-    sleeps: list[float] = []
-
-    class FakeResponse:
-        def __enter__(self) -> "FakeResponse":
-            return self
-
-        def __exit__(
-            self,
-            exc_type: object,
-            exc: object,
-            traceback: object,
-        ) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return b'{"instruments": []}'
-
-    def fake_urlopen(request: object, timeout: float, context: object) -> FakeResponse:
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            raise HTTPError(
-                "https://example.test",
-                429,
-                "Too Many Requests",
-                {"Retry-After": "2"},
-                BytesIO(b'{"message":"rate limit"}'),
-            )
-        return FakeResponse()
-
-    monkeypatch.setattr(
-        "trading_system.adapters.tinvest.instruments.urlopen",
-        fake_urlopen,
-    )
-
-    transport = UrllibJsonHttpTransport(
-        max_attempts=2,
-        backoff_seconds=0.1,
-        min_request_interval_seconds=0.0,
-        sleeper=sleeps.append,
-    )
-    transport.post("https://example.test", headers={}, payload={})
-
-    assert attempts == 2
-    assert sleeps == [2.0]
-
-
-def test_http_transport_reports_network_reason_after_retries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_urlopen(request: object, timeout: float, context: object) -> object:
-        raise URLError("connection reset by peer")
-
-    monkeypatch.setattr(
-        "trading_system.adapters.tinvest.instruments.urlopen",
-        fake_urlopen,
-    )
-
-    transport = UrllibJsonHttpTransport(
-        max_attempts=2,
-        backoff_seconds=0.0,
-        min_request_interval_seconds=0.0,
-    )
-
-    with pytest.raises(
-        TInvestResponseError,
-        match="connection reset by peer",
-    ):
-        transport.post("https://example.test", headers={}, payload={})
-
-
-def test_http_transport_reports_tinvest_error_body(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_urlopen(request: object, timeout: float, context: object) -> object:
-        raise HTTPError(
-            "https://example.test",
-            400,
-            "Bad Request",
-            {},
-            BytesIO(b'{"code":"30014","message":"invalid argument"}'),
-        )
-
-    monkeypatch.setattr(
-        "trading_system.adapters.tinvest.instruments.urlopen",
-        fake_urlopen,
-    )
-
-    transport = UrllibJsonHttpTransport(
-        max_attempts=1,
-        min_request_interval_seconds=0.0,
-    )
-
-    with pytest.raises(
-        TInvestResponseError,
-        match="invalid argument",
-    ):
-        transport.post("https://example.test", headers={}, payload={})
-
-
-def test_http_transport_does_not_retry_certificate_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    attempts = 0
-    sleeps: list[float] = []
-
-    def fake_urlopen(
-        request: object,
-        timeout: float,
-        context: object,
-    ) -> object:
-        nonlocal attempts
-        attempts += 1
-        reason = ssl.SSLCertVerificationError(
-            1,
-            "[SSL: CERTIFICATE_VERIFY_FAILED] self-signed certificate in certificate chain",
-        )
-        raise URLError(reason)
-
-    monkeypatch.setattr(
-        "trading_system.adapters.tinvest.instruments.urlopen",
-        fake_urlopen,
-    )
-
-    transport = UrllibJsonHttpTransport(
-        max_attempts=5,
-        backoff_seconds=0.1,
-        min_request_interval_seconds=0.0,
-        sleeper=sleeps.append,
-    )
-
-    with pytest.raises(
-        TInvestResponseError,
-        match="operating-system trust store",
-    ):
-        transport.post("https://example.test", headers={}, payload={})
-
-    assert attempts == 1
-    assert sleeps == []
+def test_sdk_tls_verification_is_enabled() -> None:
+    assert os.environ["SSL_TBANK_VERIFY"] == "True"
