@@ -195,7 +195,11 @@ class DashboardPage(QWidget):
         self._database_cards: dict[str, MetricCard] = {}
         for column, database_name in enumerate(("market", "research", "live")):
             card = MetricCard(
-                {"market": "Рыночные данные", "research": "Исследования", "live": "Торговля"}[database_name],
+                {
+                    "market": "Рыночные данные",
+                    "research": "Исследования",
+                    "live": "Торговля",
+                }[database_name],
                 "Проверка…",
                 subtitle="Локальное хранилище DuckDB",
                 status="ПРОВЕРКА",
@@ -283,7 +287,10 @@ class DashboardPage(QWidget):
                 ("Данные", "Набор инструментов, исторические минутные свечи и качество данных."),
                 ("Бэктест", "Моделирование стратегии и анализ сделок."),
                 ("Оптимизация", "Поиск устойчивых параметров по выборкам и инструментам."),
-                ("Валидация", "Финальная проверка кандидата на отложенных данных и стресс-сценариях."),
+                (
+                    "Валидация",
+                    "Финальная проверка кандидата на отложенных данных и стресс-сценариях.",
+                ),
             )
         ):
             title_label = QLabel(title)
@@ -895,7 +902,10 @@ class SettingsPage(QWidget):
 
         token_card = SectionCard(
             "Подключение к Т-Инвестициям",
-            subtitle="Токен хранится в системном хранилище учётных данных и не записывается в DuckDB.",
+            subtitle=(
+                "Токен хранится в системном хранилище учётных данных "
+                "и не записывается в DuckDB."
+            ),
         )
 
         status_row = QHBoxLayout()
@@ -977,7 +987,11 @@ class SettingsPage(QWidget):
 
         status = self._tinvest_token.status()
         configured = "настроен" if status.configured else "не настроен"
-        source = {"NONE": "нет", "SESSION": "сеанс", "KEYCHAIN": "системное хранилище"}.get(status.source.value, status.source.value)
+        source = {
+            "NONE": "нет",
+            "SESSION": "сеанс",
+            "KEYCHAIN": "системное хранилище",
+        }.get(status.source.value, status.source.value)
         self._token_status.setText(f"Токен: {configured} ({source})")
         keychain = "доступно" if status.keychain_available else "недоступно"
         self._keychain_status.setText(f"Системное хранилище: {keychain}")
@@ -1001,7 +1015,11 @@ class SettingsPage(QWidget):
 
         self._token_input.clear()
         source = TokenSource.KEYCHAIN if self._persist_checkbox.isChecked() else TokenSource.SESSION
-        source_text = "системного хранилища" if source is TokenSource.KEYCHAIN else "текущего сеанса"
+        source_text = (
+            "системного хранилища"
+            if source is TokenSource.KEYCHAIN
+            else "текущего сеанса"
+        )
         self._token_message.setText(f"Токен настроен для {source_text}.")
         self.refresh_token_status()
 
