@@ -4,12 +4,11 @@ import os
 
 os.environ["SSL_TBANK_VERIFY"] = "True"
 
-from t_tech.invest import (  # noqa: E402
+from t_tech.invest import Client, RequestError  # noqa: E402
+from t_tech.invest.schemas import (  # noqa: E402
     CandleInterval,
     CandleSource,
-    Client,
     InstrumentStatus,
-    RequestError,
 )
 
 __all__ = [
