@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from threading import RLock
-from typing import Any, TypeVar, cast
+from typing import Any, NoReturn, TypeVar, cast
 
 from trading_system.adapters.tinvest.errors import (
     TInvestAuthenticationError,
@@ -41,7 +41,7 @@ class TInvestGrpcSession:
             try:
                 return operation(client)
             except RequestError as exc:
-                raise TInvestResponseError(self._request_error_message(exc)) from exc
+                self._raise_request_error(exc)
 
     def close(self) -> None:
         with self._lock:
@@ -50,7 +50,9 @@ class TInvestGrpcSession:
     def _ensure_client_locked(self) -> Any:
         token = self._token_provider()
         if token is None or not token.strip():
-            raise TInvestAuthenticationError("T-Invest token is not configured")
+            raise TInvestAuthenticationError(
+                "Токен Т-Инвестиций не настроен. Откройте «Настройки» и сохраните API-токен."
+            )
         normalized = token.strip()
 
         if self._client is not None and self._token == normalized:
@@ -61,7 +63,7 @@ class TInvestGrpcSession:
         try:
             client = manager.__enter__()
         except RequestError as exc:
-            raise TInvestResponseError(self._request_error_message(exc)) from exc
+            self._raise_request_error(exc)
 
         self._token = normalized
         self._manager = manager
@@ -75,6 +77,25 @@ class TInvestGrpcSession:
         self._client = None
         if manager is not None:
             manager.__exit__(None, None, None)
+
+    @classmethod
+    def _raise_request_error(cls, error: RequestError) -> NoReturn:
+        detail = str(error)
+        if cls._is_authentication_error(detail):
+            raise TInvestAuthenticationError(
+                "Т-Инвестиции отклонили API-токен. Проверьте, что токен действующий и "
+                "вставлен без префикса Bearer. Сохраните токен заново в разделе «Настройки»."
+            ) from error
+        raise TInvestResponseError(cls._request_error_message(error)) from error
+
+    @staticmethod
+    def _is_authentication_error(detail: str) -> bool:
+        normalized = detail.casefold()
+        return (
+            "unauthenticated" in normalized
+            or "authentication token is missing or invalid" in normalized
+            or "40003" in normalized
+        )
 
     @staticmethod
     def _request_error_message(error: RequestError) -> str:
