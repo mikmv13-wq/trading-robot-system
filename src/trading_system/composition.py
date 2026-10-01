@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import ssl
 from dataclasses import dataclass
-
-import truststore
 
 from trading_system.adapters.duckdb import (
     DuckDBBootstrapper,
@@ -14,9 +11,9 @@ from trading_system.adapters.duckdb import (
 )
 from trading_system.adapters.keychain import KeyringSecretStorage
 from trading_system.adapters.tinvest import (
-    TInvestInstrumentsRestClient,
-    TInvestMarketDataRestClient,
-    UrllibJsonHttpTransport,
+    TInvestGrpcSession,
+    TInvestInstrumentsGrpcClient,
+    TInvestMarketDataGrpcClient,
 )
 from trading_system.application import (
     BackfillHistoricalCandlesUseCase,
@@ -49,9 +46,11 @@ class ApplicationServices:
     validate_market_data: ValidateMarketDataUseCase
     data: DataApplicationService
     _job_manager: JobManager
+    _tinvest_session: TInvestGrpcSession
 
     def close(self) -> None:
         self._job_manager.shutdown(wait=False, cancel_running=True)
+        self._tinvest_session.close()
 
 
 def build_application_services(
@@ -73,22 +72,10 @@ def build_application_services(
     market_repository = repositories["market"]
     if not isinstance(market_repository, DuckDBMarketRepository):
         raise TypeError("market repository must be DuckDBMarketRepository")
-    ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    if settings.ca_bundle_path is not None:
-        ca_path = settings.ca_bundle_path.expanduser()
-        if not ca_path.is_file():
-            raise FileNotFoundError(f"custom CA certificate not found: {ca_path}")
-        ssl_context.load_verify_locations(cafile=str(ca_path))
 
-    transport = UrllibJsonHttpTransport(ssl_context=ssl_context)
-    instruments_client = TInvestInstrumentsRestClient(
-        token_service.get_token,
-        transport=transport,
-    )
-    market_data_client = TInvestMarketDataRestClient(
-        token_service.get_token,
-        transport=transport,
-    )
+    tinvest_session = TInvestGrpcSession(token_service.get_token)
+    instruments_client = TInvestInstrumentsGrpcClient(tinvest_session)
+    market_data_client = TInvestMarketDataGrpcClient(tinvest_session)
     backfill_use_case = BackfillHistoricalCandlesUseCase(
         market_data_client,
         market_repository,
@@ -127,4 +114,5 @@ def build_application_services(
         sync_instruments=sync_use_case,
         data=data_service,
         _job_manager=job_manager,
+        _tinvest_session=tinvest_session,
     )
