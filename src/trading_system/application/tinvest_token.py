@@ -52,7 +52,7 @@ class TInvestTokenService:
                 error=error,
             )
 
-        if stored_token:
+        if stored_token and self._normalize_token(stored_token):
             return TInvestTokenStatus(
                 configured=True,
                 source=TokenSource.KEYCHAIN,
@@ -68,7 +68,7 @@ class TInvestTokenService:
         )
 
     def set_token(self, token: str, *, persist: bool) -> None:
-        normalized = token.strip()
+        normalized = self._normalize_token(token)
         if not normalized:
             raise ValueError("T-Invest token must not be empty")
 
@@ -93,6 +93,31 @@ class TInvestTokenService:
         if self._session_token is not None:
             return self._session_token
         try:
-            return self._secret_storage.get(self.TOKEN_KEY)
+            stored_token = self._secret_storage.get(self.TOKEN_KEY)
         except SecretStorageError as exc:
             raise TokenStorageError("Unable to read token from OS keychain") from exc
+        if stored_token is None:
+            return None
+        normalized = self._normalize_token(stored_token)
+        return normalized or None
+
+    @staticmethod
+    def _normalize_token(token: str) -> str:
+        """Return the raw SDK token, accepting common copy/paste formats.
+
+        T-Invest Python SDK adds the Authorization metadata itself. A token
+        persisted by an older REST integration may contain the Bearer prefix,
+        while values copied from env files are sometimes wrapped in quotes.
+        Both forms must be normalized before creating the SDK Client.
+        """
+
+        normalized = token.strip()
+        if len(normalized) >= 2 and normalized[0] == normalized[-1]:
+            if normalized[0] in {"'", '"'}:
+                normalized = normalized[1:-1].strip()
+
+        prefix, separator, remainder = normalized.partition(" ")
+        if separator and prefix.casefold() == "bearer":
+            normalized = remainder.strip()
+
+        return normalized
