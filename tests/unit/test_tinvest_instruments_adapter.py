@@ -128,9 +128,16 @@ def test_instruments_grpc_client_requires_token() -> None:
         client_factory=_factory(FakeSdkClient(service), [], []),
     )
 
-    with pytest.raises(TInvestAuthenticationError, match="not configured"):
+    with pytest.raises(TInvestAuthenticationError, match="не настроен"):
         TInvestInstrumentsGrpcClient(session).list_shares()
 
 
 def test_sdk_tls_verification_is_enabled() -> None:
     assert os.environ["SSL_TBANK_VERIFY"] == "True"
+
+
+def test_grpc_session_recognizes_tinvest_authentication_errors() -> None:
+    assert TInvestGrpcSession._is_authentication_error(
+        "StatusCode.UNAUTHENTICATED: 40003 Authentication token is missing or invalid"
+    )
+    assert not TInvestGrpcSession._is_authentication_error("StatusCode.UNAVAILABLE")
