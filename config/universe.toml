@@ -1,5 +1,5 @@
 [universes.default]
-name = "Default MOEX universe"
+name = "Основной набор инструментов MOEX"
 tickers = [
     "SBER",
     "GAZP",
