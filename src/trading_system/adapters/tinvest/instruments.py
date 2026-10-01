@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
@@ -32,8 +33,34 @@ class JsonHttpTransport(Protocol):
 
 
 class UrllibJsonHttpTransport:
-    def __init__(self, timeout_seconds: float = 30.0) -> None:
+    _RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
+
+    def __init__(
+        self,
+        timeout_seconds: float = 30.0,
+        *,
+        max_attempts: int = 5,
+        backoff_seconds: float = 1.0,
+        min_request_interval_seconds: float = 0.05,
+        sleeper: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be positive")
+        if backoff_seconds < 0:
+            raise ValueError("backoff_seconds must be non-negative")
+        if min_request_interval_seconds < 0:
+            raise ValueError("min_request_interval_seconds must be non-negative")
+
         self._timeout_seconds = timeout_seconds
+        self._max_attempts = max_attempts
+        self._backoff_seconds = backoff_seconds
+        self._min_request_interval_seconds = min_request_interval_seconds
+        self._sleeper = sleeper
+        self._monotonic = monotonic
+        self._last_request_started_at: float | None = None
 
     def post(
         self,
@@ -50,21 +77,110 @@ class UrllibJsonHttpTransport:
             headers=request_headers,
             method="POST",
         )
-        try:
-            with urlopen(request, timeout=self._timeout_seconds) as response:
-                decoded: object = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            raise TInvestResponseError(
-                f"T-Invest request failed with HTTP {exc.code}"
-            ) from exc
-        except URLError as exc:
-            raise TInvestResponseError("T-Invest request failed") from exc
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise TInvestResponseError("T-Invest returned invalid JSON") from exc
 
-        if not isinstance(decoded, dict):
-            raise TInvestResponseError("T-Invest response root must be an object")
-        return cast(dict[str, object], decoded)
+        last_error: Exception | None = None
+        for attempt in range(1, self._max_attempts + 1):
+            self._throttle()
+            try:
+                with urlopen(request, timeout=self._timeout_seconds) as response:
+                    decoded: object = json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                detail = self._http_error_detail(exc)
+                if (
+                    exc.code in self._RETRYABLE_HTTP_CODES
+                    and attempt < self._max_attempts
+                ):
+                    last_error = exc
+                    self._sleep_before_retry(attempt, exc)
+                    continue
+                raise TInvestResponseError(
+                    f"T-Invest request failed with HTTP {exc.code}: {detail}"
+                ) from exc
+            except (URLError, TimeoutError) as exc:
+                if attempt < self._max_attempts:
+                    last_error = exc
+                    self._sleep_before_retry(attempt)
+                    continue
+                reason = self._network_error_detail(exc)
+                raise TInvestResponseError(
+                    f"T-Invest network request failed after "
+                    f"{self._max_attempts} attempts: {reason}"
+                ) from exc
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise TInvestResponseError("T-Invest returned invalid JSON") from exc
+
+            if not isinstance(decoded, dict):
+                raise TInvestResponseError("T-Invest response root must be an object")
+            return cast(dict[str, object], decoded)
+
+        raise TInvestResponseError(
+            f"T-Invest request failed after {self._max_attempts} attempts: {last_error}"
+        )
+
+    def _throttle(self) -> None:
+        if self._last_request_started_at is not None:
+            elapsed = self._monotonic() - self._last_request_started_at
+            delay = self._min_request_interval_seconds - elapsed
+            if delay > 0:
+                self._sleeper(delay)
+        self._last_request_started_at = self._monotonic()
+
+    def _sleep_before_retry(
+        self,
+        attempt: int,
+        error: HTTPError | None = None,
+    ) -> None:
+        retry_after = self._retry_after_seconds(error)
+        delay = (
+            retry_after
+            if retry_after is not None
+            else self._backoff_seconds * (2 ** (attempt - 1))
+        )
+        if delay > 0:
+            self._sleeper(delay)
+
+    @staticmethod
+    def _retry_after_seconds(error: HTTPError | None) -> float | None:
+        if error is None or error.headers is None:
+            return None
+        value = error.headers.get("Retry-After")
+        if value is None:
+            return None
+        try:
+            seconds = float(value)
+        except ValueError:
+            return None
+        return max(0.0, seconds)
+
+    @staticmethod
+    def _network_error_detail(error: URLError | TimeoutError) -> str:
+        if isinstance(error, URLError):
+            reason = error.reason
+            return str(reason) if reason is not None else str(error)
+        return str(error) or type(error).__name__
+
+    @staticmethod
+    def _http_error_detail(error: HTTPError) -> str:
+        try:
+            raw = error.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            raw = ""
+        if not raw:
+            return error.reason or "unknown error"
+
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw[:500]
+        if not isinstance(payload, dict):
+            return raw[:500]
+
+        parts: list[str] = []
+        for key in ("message", "description", "code"):
+            value = payload.get(key)
+            if value not in (None, ""):
+                parts.append(f"{key}={value}")
+        return "; ".join(parts) if parts else raw[:500]
 
 
 class TInvestInstrumentsRestClient:
