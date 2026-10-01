@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ssl
 from dataclasses import dataclass
+
+import truststore
 
 from trading_system.adapters.duckdb import (
     DuckDBBootstrapper,
@@ -13,6 +16,7 @@ from trading_system.adapters.keychain import KeyringSecretStorage
 from trading_system.adapters.tinvest import (
     TInvestInstrumentsRestClient,
     TInvestMarketDataRestClient,
+    UrllibJsonHttpTransport,
 )
 from trading_system.application import (
     BackfillHistoricalCandlesUseCase,
@@ -69,8 +73,22 @@ def build_application_services(
     market_repository = repositories["market"]
     if not isinstance(market_repository, DuckDBMarketRepository):
         raise TypeError("market repository must be DuckDBMarketRepository")
-    instruments_client = TInvestInstrumentsRestClient(token_service.get_token)
-    market_data_client = TInvestMarketDataRestClient(token_service.get_token)
+    ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    if settings.ca_bundle_path is not None:
+        ca_path = settings.ca_bundle_path.expanduser()
+        if not ca_path.is_file():
+            raise FileNotFoundError(f"custom CA certificate not found: {ca_path}")
+        ssl_context.load_verify_locations(cafile=str(ca_path))
+
+    transport = UrllibJsonHttpTransport(ssl_context=ssl_context)
+    instruments_client = TInvestInstrumentsRestClient(
+        token_service.get_token,
+        transport=transport,
+    )
+    market_data_client = TInvestMarketDataRestClient(
+        token_service.get_token,
+        transport=transport,
+    )
     backfill_use_case = BackfillHistoricalCandlesUseCase(
         market_data_client,
         market_repository,
