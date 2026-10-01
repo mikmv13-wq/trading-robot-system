@@ -117,7 +117,7 @@ def test_data_page_renders_universe_coverage_and_progress() -> None:
         assert table.item(0, 0).text() == "AAA"
         assert table.item(0, 2).text() == "123"
         assert table.item(0, 5).text() == "2"
-        assert table.item(0, 7).text() == "RUNNING"
+        assert table.item(0, 7).text() == "ВЫПОЛНЯЕТСЯ"
         assert table.item(0, 8).text() == "50%"
     finally:
         page.close()
@@ -186,7 +186,7 @@ def test_data_page_unsynchronized_universe_is_guided_not_failed() -> None:
         validate = page.findChild(QPushButton, "validateMarketData")
 
         assert summary is not None
-        assert "not synchronized yet" in summary.text()
+        assert "ещё не синхронизирован" in summary.text()
         assert backfill is not None and backfill.isEnabled()
         assert resume is not None and not resume.isEnabled()
         assert validate is not None and not validate.isEnabled()
