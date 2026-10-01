@@ -108,7 +108,7 @@ def test_dashboard_renders_database_status_from_application_layer() -> None:
         assert table is not None
         assert table.rowCount() == 3
         assert table.item(0, 0).text() == "market"
-        assert table.item(0, 1).text() == "OK"
+        assert table.item(0, 1).text() == "НОРМА"
         assert table.item(0, 2).text() == "1"
         assert table.item(0, 3).text() == "stage-0"
     finally:
@@ -132,7 +132,7 @@ def test_dashboard_stays_operational_when_database_status_fails() -> None:
         table = window.findChild(QTableWidget, "databaseStatusTable")
 
         assert table is not None
-        assert table.item(0, 1).text() == "ERROR"
+        assert table.item(0, 1).text() == "ОШИБКА"
         assert "unavailable" in table.item(0, 1).toolTip()
     finally:
         window.close()
