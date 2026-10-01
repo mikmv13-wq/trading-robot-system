@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from io import BytesIO
+import ssl
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -105,7 +106,7 @@ def test_http_transport_retries_transient_network_error(monkeypatch: pytest.Monk
         def read(self) -> bytes:
             return b'{"instruments": []}'
 
-    def fake_urlopen(request: object, timeout: float) -> FakeResponse:
+    def fake_urlopen(request: object, timeout: float, context: object) -> FakeResponse:
         nonlocal attempts
         attempts += 1
         if attempts < 3:
@@ -154,7 +155,7 @@ def test_http_transport_retries_429_using_retry_after(
         def read(self) -> bytes:
             return b'{"instruments": []}'
 
-    def fake_urlopen(request: object, timeout: float) -> FakeResponse:
+    def fake_urlopen(request: object, timeout: float, context: object) -> FakeResponse:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -187,7 +188,7 @@ def test_http_transport_retries_429_using_retry_after(
 def test_http_transport_reports_network_reason_after_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_urlopen(request: object, timeout: float) -> object:
+    def fake_urlopen(request: object, timeout: float, context: object) -> object:
         raise URLError("connection reset by peer")
 
     monkeypatch.setattr(
@@ -211,7 +212,7 @@ def test_http_transport_reports_network_reason_after_retries(
 def test_http_transport_reports_tinvest_error_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_urlopen(request: object, timeout: float) -> object:
+    def fake_urlopen(request: object, timeout: float, context: object) -> object:
         raise HTTPError(
             "https://example.test",
             400,
@@ -235,3 +236,44 @@ def test_http_transport_reports_tinvest_error_body(
         match="invalid argument",
     ):
         transport.post("https://example.test", headers={}, payload={})
+
+
+def test_http_transport_does_not_retry_certificate_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    def fake_urlopen(
+        request: object,
+        timeout: float,
+        context: object,
+    ) -> object:
+        nonlocal attempts
+        attempts += 1
+        reason = ssl.SSLCertVerificationError(
+            1,
+            "[SSL: CERTIFICATE_VERIFY_FAILED] self-signed certificate in certificate chain",
+        )
+        raise URLError(reason)
+
+    monkeypatch.setattr(
+        "trading_system.adapters.tinvest.instruments.urlopen",
+        fake_urlopen,
+    )
+
+    transport = UrllibJsonHttpTransport(
+        max_attempts=5,
+        backoff_seconds=0.1,
+        min_request_interval_seconds=0.0,
+        sleeper=sleeps.append,
+    )
+
+    with pytest.raises(
+        TInvestResponseError,
+        match="operating-system trust store",
+    ):
+        transport.post("https://example.test", headers={}, payload={})
+
+    assert attempts == 1
+    assert sleeps == []
