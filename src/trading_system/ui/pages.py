@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-import ssl
-from pathlib import Path
-
-import truststore
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -911,54 +906,19 @@ class SettingsPage(QWidget):
 
         layout.addWidget(token_card)
 
-        ca_card = SectionCard(
-            "TLS certificate",
-            subtitle=(
-                "Дополнительный корневой CA для корпоративного proxy/antivirus. "
-                "Проверка TLS остаётся включённой."
-            ),
+        transport_card = SectionCard(
+            "T-Invest transport",
+            subtitle="Официальный Python SDK T-Invest поверх gRPC.",
         )
-
-        self._ca_input = QLineEdit()
-        self._ca_input.setObjectName("customCaPath")
-        self._ca_input.setPlaceholderText("Путь к .pem/.crt файлу корневого сертификата")
-        if self._settings is not None and self._settings.ca_bundle_path is not None:
-            self._ca_input.setText(str(self._settings.ca_bundle_path))
-        ca_card.content.addWidget(self._ca_input)
-
-        ca_controls = QHBoxLayout()
-        self._ca_browse_button = _button(
-            "Выбрать сертификат",
-            object_name="browseCustomCa",
-            variant="ghost",
+        transport_label = QLabel(
+            "TLS: проверка сертификата SDK включена (SSL_TBANK_VERIFY=True). "
+            "Используется сертификат НУЦ Минцифры, встроенный в SDK."
         )
-        self._ca_browse_button.clicked.connect(self._browse_ca)
-        ca_controls.addWidget(self._ca_browse_button)
-
-        self._ca_save_button = _button(
-            "Сохранить CA",
-            object_name="saveCustomCa",
-            variant="primary",
-        )
-        self._ca_save_button.clicked.connect(self._save_ca)
-        ca_controls.addWidget(self._ca_save_button)
-
-        self._ca_clear_button = _button(
-            "Очистить",
-            object_name="clearCustomCa",
-            variant="danger",
-        )
-        self._ca_clear_button.clicked.connect(self._clear_ca)
-        ca_controls.addWidget(self._ca_clear_button)
-        ca_controls.addStretch(1)
-        ca_card.content.addLayout(ca_controls)
-
-        self._ca_message = QLabel()
-        self._ca_message.setObjectName("customCaMessage")
-        self._ca_message.setWordWrap(True)
-        ca_card.content.addWidget(self._ca_message)
-
-        layout.addWidget(ca_card)
+        transport_label.setObjectName("tinvestTransportStatus")
+        transport_label.setWordWrap(True)
+        transport_label.setProperty("tone", "muted")
+        transport_card.content.addWidget(transport_label)
+        layout.addWidget(transport_card)
         layout.addStretch(1)
 
         enabled = self._tinvest_token is not None
@@ -1015,61 +975,3 @@ class SettingsPage(QWidget):
         self._token_input.clear()
         self._token_message.setText("Token removed.")
         self.refresh_token_status()
-
-    def _browse_ca(self) -> None:
-        selected, _ = QFileDialog.getOpenFileName(
-            self,
-            "Выберите корневой сертификат",
-            "",
-            "Certificates (*.pem *.crt *.cer);;All files (*.*)",
-        )
-        if selected:
-            self._ca_input.setText(selected)
-
-    def _save_ca(self) -> None:
-        if self._settings is None:
-            self._ca_message.setText("Settings service is unavailable.")
-            return
-
-        raw = self._ca_input.text().strip()
-        if not raw:
-            self._ca_message.setText("Выберите файл сертификата.")
-            return
-
-        path = Path(raw).expanduser()
-        if not path.is_file():
-            self._ca_message.setText(f"Файл не найден: {path}")
-            return
-
-        try:
-            context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            context.load_verify_locations(cafile=str(path))
-        except Exception as exc:
-            self._ca_message.setText(f"Сертификат не удалось загрузить: {exc}")
-            return
-
-        try:
-            self._settings.persist_ca_bundle_path(path)
-        except OSError as exc:
-            self._ca_message.setText(f"Не удалось сохранить настройку: {exc}")
-            return
-
-        self._ca_input.setText(str(self._settings.ca_bundle_path))
-        self._ca_message.setText(
-            "CA сохранён. Перезапустите приложение и нажмите Resume."
-        )
-
-    def _clear_ca(self) -> None:
-        if self._settings is None:
-            self._ca_message.setText("Settings service is unavailable.")
-            return
-        try:
-            self._settings.persist_ca_bundle_path(None)
-        except OSError as exc:
-            self._ca_message.setText(f"Не удалось сохранить настройку: {exc}")
-            return
-
-        self._ca_input.clear()
-        self._ca_message.setText(
-            "Custom CA отключён. Перезапустите приложение для применения."
-        )
