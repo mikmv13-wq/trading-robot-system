@@ -37,10 +37,20 @@ class NavigationEntry:
 
 
 NAVIGATION: tuple[NavigationEntry, ...] = (
-    NavigationEntry("dashboard", "Панель управления", "Общее состояние приложения.", "SP_DesktopIcon"),
+    NavigationEntry(
+        "dashboard",
+        "Панель управления",
+        "Общее состояние приложения.",
+        "SP_DesktopIcon",
+    ),
     NavigationEntry("data", "Данные", "Инструменты, история и качество данных.", "SP_DriveHDIcon"),
     NavigationEntry("charts", "Графики", "Просмотр свечей и результатов стратегии.", "SP_FileIcon"),
-    NavigationEntry("backtest", "Бэктест", "Запуск и анализ результатов тестирования стратегии.", "SP_MediaPlay"),
+    NavigationEntry(
+        "backtest",
+        "Бэктест",
+        "Запуск и анализ результатов тестирования стратегии.",
+        "SP_MediaPlay",
+    ),
     NavigationEntry(
         "optimization",
         "Оптимизация",
@@ -54,9 +64,19 @@ NAVIGATION: tuple[NavigationEntry, ...] = (
         "SP_DialogApplyButton",
     ),
     NavigationEntry("strategies", "Стратегии", "Реестр торговых стратегий.", "SP_FileIcon"),
-    NavigationEntry("trading", "Торговля", "Песочница и рабочий режим торговли.", "SP_ArrowForward"),
+    NavigationEntry(
+        "trading",
+        "Торговля",
+        "Песочница и рабочий режим торговли.",
+        "SP_ArrowForward",
+    ),
     NavigationEntry("logs", "Журнал", "Журнал событий приложения.", "SP_FileIcon"),
-    NavigationEntry("settings", "Настройки", "Настройки настольного приложения.", "SP_ComputerIcon"),
+    NavigationEntry(
+        "settings",
+        "Настройки",
+        "Настройки настольного приложения.",
+        "SP_ComputerIcon",
+    ),
 )
 
 
