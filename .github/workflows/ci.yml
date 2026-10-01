@@ -1,5 +1,9 @@
 name: CI
 
+env:
+  PIP_EXTRA_INDEX_URL: "https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple"
+  SSL_TBANK_VERIFY: "True"
+
 on:
   push:
     branches: [main]
