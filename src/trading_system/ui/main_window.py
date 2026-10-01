@@ -23,6 +23,7 @@ from trading_system.application import (
     JobApplicationService,
     TInvestTokenService,
 )
+from trading_system.config import Settings
 from trading_system.ui.pages import DashboardPage, DataPage, PlaceholderPage, SettingsPage
 from trading_system.ui.widgets import StatusBadge
 
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
         jobs: JobApplicationService,
         tinvest_token: TInvestTokenService | None = None,
         data: DataApplicationService | None = None,
+        settings: Settings | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -100,7 +102,7 @@ class MainWindow(QMainWindow):
             elif entry.key == "data":
                 page = DataPage(data)
             elif entry.key == "settings":
-                page = SettingsPage(tinvest_token)
+                page = SettingsPage(tinvest_token, settings)
             else:
                 page = PlaceholderPage(
                     entry.label,
