@@ -37,26 +37,26 @@ class NavigationEntry:
 
 
 NAVIGATION: tuple[NavigationEntry, ...] = (
-    NavigationEntry("dashboard", "Dashboard", "Общее состояние приложения.", "SP_DesktopIcon"),
-    NavigationEntry("data", "Data", "Инструменты, история и качество данных.", "SP_DriveHDIcon"),
-    NavigationEntry("charts", "Charts", "Просмотр свечей и результатов стратегии.", "SP_FileIcon"),
-    NavigationEntry("backtest", "Backtest", "Запуск и анализ backtest.", "SP_MediaPlay"),
+    NavigationEntry("dashboard", "Панель управления", "Общее состояние приложения.", "SP_DesktopIcon"),
+    NavigationEntry("data", "Данные", "Инструменты, история и качество данных.", "SP_DriveHDIcon"),
+    NavigationEntry("charts", "Графики", "Просмотр свечей и результатов стратегии.", "SP_FileIcon"),
+    NavigationEntry("backtest", "Бэктест", "Запуск и анализ результатов тестирования стратегии.", "SP_MediaPlay"),
     NavigationEntry(
         "optimization",
-        "Optimization",
+        "Оптимизация",
         "Подбор устойчивых параметров.",
         "SP_BrowserReload",
     ),
     NavigationEntry(
         "validation",
-        "Validation",
-        "Финальная holdout validation.",
+        "Валидация",
+        "Финальная проверка на отложенных данных.",
         "SP_DialogApplyButton",
     ),
-    NavigationEntry("strategies", "Strategies", "Strategy Registry.", "SP_FileIcon"),
-    NavigationEntry("trading", "Trading", "Sandbox и production runtime.", "SP_ArrowForward"),
-    NavigationEntry("logs", "Logs", "Журнал событий приложения.", "SP_FileIcon"),
-    NavigationEntry("settings", "Settings", "Настройки desktop-приложения.", "SP_ComputerIcon"),
+    NavigationEntry("strategies", "Стратегии", "Реестр торговых стратегий.", "SP_FileIcon"),
+    NavigationEntry("trading", "Торговля", "Песочница и рабочий режим торговли.", "SP_ArrowForward"),
+    NavigationEntry("logs", "Журнал", "Журнал событий приложения.", "SP_FileIcon"),
+    NavigationEntry("settings", "Настройки", "Настройки настольного приложения.", "SP_ComputerIcon"),
 )
 
 
@@ -72,7 +72,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("mainWindow")
-        self.setWindowTitle("Trading Robot System")
+        self.setWindowTitle("Система торговых роботов")
         self.resize(1440, 900)
         self.setMinimumSize(1080, 700)
 
@@ -134,19 +134,19 @@ class MainWindow(QMainWindow):
         mark.setObjectName("productMark")
         layout.addWidget(mark)
 
-        title = QLabel("Trading Robot System")
+        title = QLabel("Система торговых роботов")
         title.setObjectName("topProductName")
         layout.addWidget(title)
         layout.addStretch(1)
 
-        mode_caption = QLabel("Mode")
+        mode_caption = QLabel("Режим")
         mode_caption.setObjectName("topMeta")
         layout.addWidget(mode_caption)
-        layout.addWidget(StatusBadge("RESEARCH", tone="success"))
+        layout.addWidget(StatusBadge("ИССЛЕДОВАНИЕ", tone="success"))
 
         layout.addWidget(self._vertical_divider())
 
-        broker_caption = QLabel("T-Invest")
+        broker_caption = QLabel("Т-Инвестиции")
         broker_caption.setObjectName("topMeta")
         layout.addWidget(broker_caption)
 
@@ -157,7 +157,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 configured = False
         broker_status = StatusBadge(
-            "TOKEN READY" if configured else "NO TOKEN",
+            "ТОКЕН НАСТРОЕН" if configured else "НЕТ ТОКЕНА",
             tone="success" if configured else "warning",
         )
         broker_status.setObjectName("topBrokerStatus")
@@ -165,10 +165,10 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self._vertical_divider())
 
-        jobs_caption = QLabel("Background jobs")
+        jobs_caption = QLabel("Фоновые задачи")
         jobs_caption.setObjectName("topMeta")
         layout.addWidget(jobs_caption)
-        layout.addWidget(StatusBadge("READY", tone="info"))
+        layout.addWidget(StatusBadge("ГОТОВО", tone="info"))
 
         return bar
 
@@ -184,17 +184,17 @@ class MainWindow(QMainWindow):
 
         product_row = QHBoxLayout()
         product_row.setSpacing(9)
-        product_mark = QLabel("TRS")
+        product_mark = QLabel("СТР")
         product_mark.setObjectName("productMark")
         product_row.addWidget(product_mark)
 
-        product_label = QLabel("Research Workspace")
+        product_label = QLabel("Рабочая область")
         product_label.setObjectName("productName")
         product_label.setWordWrap(True)
         product_row.addWidget(product_label, 1)
         layout.addLayout(product_row)
 
-        caption = QLabel("WORKSPACE")
+        caption = QLabel("РАЗДЕЛЫ")
         caption.setObjectName("topMeta")
         layout.addWidget(caption)
 
@@ -219,7 +219,7 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self._navigation, 1)
 
-        footer = QLabel("LOCAL DESKTOP\nDuckDB · PySide6")
+        footer = QLabel("ЛОКАЛЬНОЕ ПРИЛОЖЕНИЕ\nDuckDB · PySide6")
         footer.setObjectName("footerMeta")
         layout.addWidget(footer)
         return sidebar
@@ -242,15 +242,15 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(18, 0, 18, 0)
         layout.setSpacing(10)
 
-        layout.addWidget(StatusBadge("RESEARCH", tone="success"))
+        layout.addWidget(StatusBadge("ИССЛЕДОВАНИЕ", tone="success"))
 
-        storage = QLabel("Local DuckDB storage")
+        storage = QLabel("Локальное хранилище DuckDB")
         storage.setObjectName("footerMeta")
         layout.addWidget(storage)
 
         layout.addStretch(1)
 
-        runtime = QLabel("Desktop runtime ready")
+        runtime = QLabel("Приложение готово к работе")
         runtime.setObjectName("footerMeta")
         layout.addWidget(runtime)
         return bar
