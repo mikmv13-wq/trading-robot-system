@@ -76,6 +76,7 @@ def _job_message_text(message: str | None) -> str:
     replacements = (
         ("Step ", "Шаг "),
         ("test job completed", "тестовая задача завершена"),
+        ("Completed", "Завершено"),
         ("Synchronizing instruments: ", "Синхронизация инструментов: "),
         ("Synchronized ", "Синхронизировано "),
         (" instruments", " инструментов"),
@@ -177,7 +178,7 @@ class DashboardPage(QWidget):
 
         header = PageHeader(
             "Панель управления",
-            "Состояние desktop-приложения, локального хранилища и фоновых задач.",
+            "Состояние настольного приложения, локального хранилища и фоновых задач.",
         )
         refresh_button = _button(
             "↻  Обновить",
@@ -959,7 +960,7 @@ class SettingsPage(QWidget):
 
         transport_card = SectionCard(
             "Соединение с Т-Инвестициями",
-            subtitle="Официальный Python SDK T-Invest поверх gRPC.",
+            subtitle="Официальный Python SDK Т-Инвестиций поверх gRPC.",
         )
         transport_label = QLabel(
             "TLS: проверка сертификата SDK включена (SSL_TBANK_VERIFY=True). "
