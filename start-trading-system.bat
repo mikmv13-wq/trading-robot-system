@@ -1,5 +1,7 @@
 @echo off
 setlocal EnableExtensions
+set "PIP_EXTRA_INDEX_URL=https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple"
+set "SSL_TBANK_VERIFY=True"
 cd /d "%~dp0"
 
 title Trading Robot System
@@ -68,8 +70,13 @@ goto :install_check
 echo [1/4] Virtual environment: OK
 
 :install_check
-if exist "%DESKTOP%" if exist "%TRADER%" goto :application_ready
+if not exist "%DESKTOP%" goto :install_application
+if not exist "%TRADER%" goto :install_application
+"%VENV_PYTHON%" -c "import t_tech.invest" >nul 2>nul
+if errorlevel 1 goto :install_application
+goto :application_ready
 
+:install_application
 echo [2/4] Installing application and dependencies...
 "%VENV_PYTHON%" -m pip install --upgrade pip
 if errorlevel 1 goto :failed
