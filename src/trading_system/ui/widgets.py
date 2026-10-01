@@ -44,7 +44,7 @@ class MetricCard(QFrame):
         value: str,
         *,
         subtitle: str = "",
-        status: str = "READY",
+        status: str = "ГОТОВО",
         tone: str = "muted",
         object_name: str | None = None,
         parent: QWidget | None = None,
@@ -135,7 +135,7 @@ class JobPanel(QFrame):
     def __init__(
         self,
         *,
-        title: str = "Background job",
+        title: str = "Фоновая задача",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -151,7 +151,7 @@ class JobPanel(QFrame):
         header.addWidget(title_label)
         header.addStretch(1)
 
-        self.status = StatusBadge("IDLE", tone="muted")
+        self.status = StatusBadge("ОЖИДАНИЕ", tone="muted")
         header.addWidget(self.status)
         layout.addLayout(header)
 
@@ -160,7 +160,7 @@ class JobPanel(QFrame):
         self.progress.setValue(0)
         layout.addWidget(self.progress)
 
-        self.message = QLabel("No background job running.")
+        self.message = QLabel("Фоновые задачи не выполняются.")
         self.message.setObjectName("jobMessage")
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
