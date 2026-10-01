@@ -1,23 +1,21 @@
-from trading_system.adapters.tinvest.instruments import (
-    JsonHttpTransport,
+from trading_system.adapters.tinvest.errors import (
     TInvestAuthenticationError,
     TInvestClientError,
-    TInvestInstrumentsRestClient,
     TInvestResponseError,
-    UrllibJsonHttpTransport,
 )
+from trading_system.adapters.tinvest.instruments import TInvestInstrumentsGrpcClient
 from trading_system.adapters.tinvest.market_data import (
     TInvestCandleNormalizer,
-    TInvestMarketDataRestClient,
+    TInvestMarketDataGrpcClient,
 )
+from trading_system.adapters.tinvest.session import TInvestGrpcSession
 
 __all__ = [
-    "JsonHttpTransport",
     "TInvestAuthenticationError",
     "TInvestCandleNormalizer",
     "TInvestClientError",
-    "TInvestInstrumentsRestClient",
-    "TInvestMarketDataRestClient",
+    "TInvestGrpcSession",
+    "TInvestInstrumentsGrpcClient",
+    "TInvestMarketDataGrpcClient",
     "TInvestResponseError",
-    "UrllibJsonHttpTransport",
 ]
