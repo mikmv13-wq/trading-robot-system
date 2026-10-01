@@ -55,6 +55,25 @@ def test_persisted_token_uses_secret_storage() -> None:
     assert storage.values == {}
 
 
+def test_token_normalization_removes_bearer_prefix_and_quotes() -> None:
+    storage = FakeSecretStorage()
+    service = TInvestTokenService(storage)
+
+    service.set_token('  "Bearer secret-token"  ', persist=True)
+
+    assert storage.values[service.TOKEN_KEY] == "secret-token"
+    assert service.get_token() == "secret-token"
+
+
+def test_old_keychain_bearer_token_is_normalized_on_read() -> None:
+    storage = FakeSecretStorage()
+    service = TInvestTokenService(storage)
+    storage.values[service.TOKEN_KEY] = "Bearer legacy-token"
+
+    assert service.status().configured is True
+    assert service.get_token() == "legacy-token"
+
+
 def test_keychain_unavailability_is_reported_without_crashing_status() -> None:
     storage = FakeSecretStorage(unavailable=True)
     service = TInvestTokenService(storage)
