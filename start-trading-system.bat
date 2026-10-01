@@ -1,6 +1,5 @@
 @echo off
 setlocal EnableExtensions
-set "PIP_EXTRA_INDEX_URL=https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple"
 set "SSL_TBANK_VERIFY=True"
 cd /d "%~dp0"
 
@@ -79,6 +78,9 @@ goto :application_ready
 :install_application
 echo [2/4] Installing application and dependencies...
 "%VENV_PYTHON%" -m pip install --upgrade pip
+if errorlevel 1 goto :failed
+
+"%VENV_PYTHON%" -m pip install "t-tech-investments>=1.49.2,<2.0" --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple
 if errorlevel 1 goto :failed
 
 "%VENV_PYTHON%" -m pip install -e .
