@@ -1,6 +1,6 @@
+import ssl
 from collections.abc import Mapping
 from io import BytesIO
-import ssl
 from urllib.error import HTTPError, URLError
 
 import pytest
