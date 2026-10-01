@@ -52,6 +52,47 @@ def _job_tone(status: JobStatus | str) -> str:
     return "muted"
 
 
+_STATUS_TEXT = {
+    "OK": "НОРМА",
+    "ERROR": "ОШИБКА",
+    "PENDING": "ОЖИДАНИЕ",
+    "RUNNING": "ВЫПОЛНЯЕТСЯ",
+    "CANCELLING": "ОТМЕНЯЕТСЯ",
+    "COMPLETED": "ЗАВЕРШЕНО",
+    "FAILED": "ОШИБКА",
+    "CANCELLED": "ОТМЕНЕНО",
+}
+
+
+def _status_text(value: object) -> str:
+    raw = getattr(value, "value", value)
+    text = str(raw)
+    return _STATUS_TEXT.get(text, text)
+
+
+def _job_message_text(message: str | None) -> str:
+    if not message:
+        return ""
+    replacements = (
+        ("Step ", "Шаг "),
+        ("test job completed", "тестовая задача завершена"),
+        ("Synchronizing instruments: ", "Синхронизация инструментов: "),
+        ("Synchronized ", "Синхронизировано "),
+        (" instruments", " инструментов"),
+        ("Validating market data: ", "Проверка рыночных данных: "),
+        ("Validation completed: ", "Проверка завершена: "),
+        ("Backfill ", "Загрузка истории: "),
+        (" chunks complete", " фрагментов завершено"),
+        ("Instrument ", "Инструмент "),
+        ("chunk ", "фрагмент "),
+        ("fetched ", "получено "),
+    )
+    result = message
+    for source, target in replacements:
+        result = result.replace(source, target)
+    return result
+
+
 class PageHeader(QWidget):
     def __init__(self, title: str, subtitle: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -101,7 +142,7 @@ class PlaceholderPage(QWidget):
         empty_layout.setContentsMargins(28, 28, 28, 28)
         empty_layout.setSpacing(8)
 
-        heading = QLabel("Workspace is ready")
+        heading = QLabel("Рабочая область готова")
         heading.setObjectName("sectionTitle")
         empty_layout.addWidget(heading)
 
@@ -135,11 +176,11 @@ class DashboardPage(QWidget):
         layout.setSpacing(18)
 
         header = PageHeader(
-            "Dashboard",
+            "Панель управления",
             "Состояние desktop-приложения, локального хранилища и фоновых задач.",
         )
         refresh_button = _button(
-            "↻  Refresh",
+            "↻  Обновить",
             object_name="refreshDatabaseStatus",
             variant="ghost",
         )
@@ -154,10 +195,10 @@ class DashboardPage(QWidget):
         self._database_cards: dict[str, MetricCard] = {}
         for column, database_name in enumerate(("market", "research", "live")):
             card = MetricCard(
-                f"{database_name.capitalize()} DB",
-                "Checking…",
-                subtitle="DuckDB local storage",
-                status="CHECKING",
+                {"market": "Рыночные данные", "research": "Исследования", "live": "Торговля"}[database_name],
+                "Проверка…",
+                subtitle="Локальное хранилище DuckDB",
+                status="ПРОВЕРКА",
                 tone="info",
                 object_name=f"database-{database_name}",
             )
@@ -166,10 +207,10 @@ class DashboardPage(QWidget):
             self._database_cards[database_name] = card
 
         app_card = MetricCard(
-            "Application mode",
-            "RESEARCH",
-            subtitle="Safe local research workspace",
-            status="ACTIVE",
+            "Режим приложения",
+            "ИССЛЕДОВАНИЕ",
+            subtitle="Безопасный локальный режим исследований",
+            status="АКТИВЕН",
             tone="success",
             object_name="application-mode",
         )
@@ -184,18 +225,18 @@ class DashboardPage(QWidget):
         self._database_table = QTableWidget(0, 4, self)
         self._database_table.setObjectName("databaseStatusTable")
         self._database_table.setHorizontalHeaderLabels(
-            ["Database", "Status", "Schema", "Baseline"]
+            ["База данных", "Статус", "Схема", "Базовая версия"]
         )
         self._database_table.setVisible(False)
 
         job_card = SectionCard(
-            "Active job",
+            "Активная задача",
             subtitle="Длительные операции выполняются в фоне и не блокируют интерфейс.",
         )
 
         job_controls = QHBoxLayout()
         self._run_job_button = _button(
-            "Run test job",
+            "Запустить тестовую задачу",
             object_name="runTestJob",
             variant="primary",
         )
@@ -203,7 +244,7 @@ class DashboardPage(QWidget):
         job_controls.addWidget(self._run_job_button)
 
         self._cancel_job_button = _button(
-            "Cancel",
+            "Отмена",
             object_name="cancelTestJob",
             variant="danger",
         )
@@ -212,7 +253,7 @@ class DashboardPage(QWidget):
         job_controls.addWidget(self._cancel_job_button)
         job_controls.addStretch(1)
 
-        self._job_status = StatusBadge("IDLE", tone="muted")
+        self._job_status = StatusBadge("ОЖИДАНИЕ", tone="muted")
         self._job_status.setObjectName("jobStatus")
         job_controls.addWidget(self._job_status)
         job_card.content.addLayout(job_controls)
@@ -223,15 +264,15 @@ class DashboardPage(QWidget):
         self._job_progress.setValue(0)
         job_card.content.addWidget(self._job_progress)
 
-        self._job_message = QLabel("No background job running.")
+        self._job_message = QLabel("Фоновые задачи не выполняются.")
         self._job_message.setObjectName("jobMessage")
         self._job_message.setWordWrap(True)
         job_card.content.addWidget(self._job_message)
         layout.addWidget(job_card)
 
         overview = SectionCard(
-            "Workspace",
-            subtitle="Research-first desktop workflow without a web layer.",
+            "Рабочая область",
+            subtitle="Локальный рабочий процесс без веб-интерфейса.",
         )
         overview_grid = QGridLayout()
         overview_grid.setHorizontalSpacing(18)
@@ -239,10 +280,10 @@ class DashboardPage(QWidget):
 
         for row, (title, text) in enumerate(
             (
-                ("Data", "Universe, historical 1m candles and data quality."),
-                ("Backtest", "Strategy simulation and trade-level analysis."),
-                ("Optimization", "Stable parameter search across folds and instruments."),
-                ("Validation", "Frozen candidate holdout and stress validation."),
+                ("Данные", "Набор инструментов, исторические минутные свечи и качество данных."),
+                ("Бэктест", "Моделирование стратегии и анализ сделок."),
+                ("Оптимизация", "Поиск устойчивых параметров по выборкам и инструментам."),
+                ("Валидация", "Финальная проверка кандидата на отложенных данных и стресс-сценариях."),
             )
         ):
             title_label = QLabel(title)
@@ -268,7 +309,7 @@ class DashboardPage(QWidget):
         self._database_table.setRowCount(len(result.databases))
 
         for row, database in enumerate(result.databases):
-            status_text = database.status.value
+            status_text = _status_text(database.status)
             schema_text = (
                 str(database.schema_version)
                 if database.schema_version is not None
@@ -288,16 +329,16 @@ class DashboardPage(QWidget):
                 continue
             if database.status is HealthStatus.ERROR:
                 card.set_metric(
-                    value="Unavailable",
-                    subtitle=f"Schema {schema_text} · {baseline}",
-                    status="ERROR",
+                    value="Недоступна",
+                    subtitle=f"Схема {schema_text} · {baseline}",
+                    status="ОШИБКА",
                     tone="danger",
                     tooltip=database.error or "",
                 )
             else:
                 card.set_metric(
-                    value=f"Schema v{schema_text}",
-                    subtitle=f"{baseline} · local DuckDB",
+                    value=f"Схема v{schema_text}",
+                    subtitle=f"{baseline} · локальная DuckDB",
                     status=status_text,
                     tone="success",
                 )
@@ -307,8 +348,8 @@ class DashboardPage(QWidget):
         self._run_job_button.setEnabled(False)
         self._cancel_job_button.setEnabled(True)
         self._job_progress.setValue(0)
-        self._job_status.set_status(JobStatus.PENDING.value, tone="info")
-        self._job_message.setText("Test job submitted.")
+        self._job_status.set_status(_status_text(JobStatus.PENDING), tone="info")
+        self._job_message.setText("Тестовая задача запущена.")
         self._job_timer.start()
         self._poll_job()
 
@@ -324,7 +365,7 @@ class DashboardPage(QWidget):
 
         snapshot = self._jobs.get(self._current_job_id)
         self._job_status.set_status(
-            snapshot.status.value,
+            _status_text(snapshot.status),
             tone=_job_tone(snapshot.status),
         )
         self._job_progress.setValue(round(snapshot.progress * 100))
@@ -334,7 +375,7 @@ class DashboardPage(QWidget):
             message = snapshot.error
         elif snapshot.status is JobStatus.COMPLETED and snapshot.result is not None:
             message = str(snapshot.result)
-        self._job_message.setText(message or "")
+        self._job_message.setText(_job_message_text(message))
 
         if snapshot.status.terminal:
             self._job_timer.stop()
@@ -364,11 +405,11 @@ class DataPage(QWidget):
         layout.setSpacing(16)
 
         header = PageHeader(
-            "Market Data",
-            "Universe, исторические 1m данные, coverage и контроль качества.",
+            "Рыночные данные",
+            "Набор инструментов, исторические минутные данные, покрытие и контроль качества.",
         )
         self._refresh_button = _button(
-            "↻  Refresh",
+            "↻  Обновить",
             object_name="refreshDataStatus",
             variant="ghost",
         )
@@ -377,11 +418,11 @@ class DataPage(QWidget):
         layout.addWidget(header)
 
         controls_card = SectionCard(
-            "Data controls",
-            subtitle="Управление universe и исторической загрузкой T-Invest.",
+            "Управление данными",
+            subtitle="Управление набором инструментов и исторической загрузкой из Т-Инвестиций.",
         )
         universe_row = QHBoxLayout()
-        universe_label = QLabel("Universe")
+        universe_label = QLabel("Набор инструментов")
         universe_label.setObjectName("metricTitle")
         universe_row.addWidget(universe_label)
 
@@ -394,7 +435,7 @@ class DataPage(QWidget):
         universe_row.addStretch(1)
 
         self._sync_button = _button(
-            "Sync instruments",
+            "Синхронизировать инструменты",
             object_name="syncInstruments",
             variant="ghost",
         )
@@ -402,7 +443,7 @@ class DataPage(QWidget):
         universe_row.addWidget(self._sync_button)
 
         self._backfill_button = _button(
-            "Backfill 5 years",
+            "Загрузить историю за 5 лет",
             object_name="startDataBackfill",
             variant="primary",
         )
@@ -410,7 +451,7 @@ class DataPage(QWidget):
         universe_row.addWidget(self._backfill_button)
 
         self._resume_button = _button(
-            "Resume",
+            "Продолжить",
             object_name="resumeDataBackfill",
             variant="ghost",
         )
@@ -418,7 +459,7 @@ class DataPage(QWidget):
         universe_row.addWidget(self._resume_button)
 
         self._validate_button = _button(
-            "Validate",
+            "Проверить",
             object_name="validateMarketData",
             variant="ghost",
         )
@@ -426,7 +467,7 @@ class DataPage(QWidget):
         universe_row.addWidget(self._validate_button)
 
         self._cancel_button = _button(
-            "Cancel",
+            "Отмена",
             object_name="cancelDataJob",
             variant="danger",
         )
@@ -441,24 +482,24 @@ class DataPage(QWidget):
         summary_grid.setHorizontalSpacing(14)
 
         self._rows_card = MetricCard(
-            "Candles",
+            "Свечи",
             "—",
-            subtitle="1 minute OHLCV rows",
-            status="WAITING",
+            subtitle="Минутные строки OHLCV",
+            status="ОЖИДАНИЕ",
             tone="muted",
         )
         self._gaps_card = MetricCard(
-            "Data gaps",
+            "Пропуски данных",
             "—",
-            subtitle="Detected missing intervals",
-            status="WAITING",
+            subtitle="Обнаруженные пропущенные интервалы",
+            status="ОЖИДАНИЕ",
             tone="muted",
         )
         self._instruments_card = MetricCard(
-            "Instruments",
+            "Инструменты",
             "—",
-            subtitle="Universe coverage",
-            status="WAITING",
+            subtitle="Покрытие набора инструментов",
+            status="ОЖИДАНИЕ",
             tone="muted",
         )
         summary_grid.addWidget(self._rows_card, 0, 0)
@@ -470,16 +511,16 @@ class DataPage(QWidget):
         layout.addLayout(summary_grid)
 
         job_card = SectionCard(
-            "Background job",
-            subtitle="Загрузка и validation продолжаются без блокировки интерфейса.",
+            "Фоновая задача",
+            subtitle="Загрузка и проверка данных выполняются без блокировки интерфейса.",
         )
         job_row = QHBoxLayout()
 
-        self._job_status = StatusBadge("IDLE", tone="muted")
+        self._job_status = StatusBadge("ОЖИДАНИЕ", tone="muted")
         self._job_status.setObjectName("dataJobStatus")
         job_row.addWidget(self._job_status)
 
-        self._job_message = QLabel("No data job running.")
+        self._job_message = QLabel("Фоновые задачи с данными не выполняются.")
         self._job_message.setObjectName("dataJobMessage")
         self._job_message.setWordWrap(True)
         job_row.addWidget(self._job_message, 1)
@@ -493,8 +534,8 @@ class DataPage(QWidget):
         layout.addWidget(job_card)
 
         coverage_card = SectionCard(
-            "Market data coverage",
-            subtitle="Покрытие, checkpoints и найденные gaps по каждому инструменту.",
+            "Покрытие рыночных данных",
+            subtitle="Покрытие, точки восстановления и найденные пропуски по каждому инструменту.",
         )
 
         self._summary = QLabel()
@@ -506,15 +547,15 @@ class DataPage(QWidget):
         self._table.setObjectName("dataCoverageTable")
         self._table.setHorizontalHeaderLabels(
             [
-                "Ticker",
+                "Тикер",
                 "UID",
-                "Rows",
-                "From",
-                "To",
-                "Gaps",
-                "Missing min",
-                "Checkpoint",
-                "Progress",
+                "Строки",
+                "С",
+                "По",
+                "Пропуски",
+                "Пропущено мин.",
+                "Точка восстановления",
+                "Прогресс",
             ]
         )
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -556,7 +597,7 @@ class DataPage(QWidget):
         self._universe.clear()
         if self._data is None:
             self._set_enabled(False)
-            self._job_message.setText("Data application service is unavailable.")
+            self._job_message.setText("Сервис работы с данными недоступен.")
             return
         try:
             universes = self._data.list_universes()
@@ -574,7 +615,7 @@ class DataPage(QWidget):
     def refresh_status(self) -> None:
         if self._data is None or self._universe.count() == 0:
             self._table.setRowCount(0)
-            self._summary.setText("No universe selected.")
+            self._summary.setText("Набор инструментов не выбран.")
             self._set_summary_cards_empty()
             return
         try:
@@ -585,16 +626,16 @@ class DataPage(QWidget):
             self._has_data = False
             self._table.setRowCount(0)
             self._summary.setText(
-                "Universe is not synchronized yet. "
-                "Use Backfill 5 years to synchronize instruments automatically "
-                "and start loading data, or use Sync instruments only."
+                "Набор инструментов ещё не синхронизирован. "
+                "Нажмите «Загрузить историю за 5 лет», чтобы автоматически синхронизировать "
+                "инструменты и начать загрузку, либо выполните только синхронизацию."
             )
             self._set_summary_cards_empty()
             self._update_controls()
             return
         except Exception as exc:
             self._table.setRowCount(0)
-            self._summary.setText(f"Unable to read data status: {exc}")
+            self._summary.setText(f"Не удалось получить состояние данных: {exc}")
             self._set_summary_cards_empty()
             self._update_controls()
             return
@@ -605,15 +646,15 @@ class DataPage(QWidget):
         )
         self._has_data = status.total_rows > 0
         self._summary.setText(
-            f"Rows: {status.total_rows:,}    Gaps: {status.total_gaps}    "
-            f"Instruments: {len(status.instruments)}"
+            f"Строк: {status.total_rows:,}    Пропусков: {status.total_gaps}    "
+            f"Инструментов: {len(status.instruments)}"
         )
 
         gap_tone = "success" if status.total_gaps == 0 else "warning"
-        gap_status = "CLEAN" if status.total_gaps == 0 else "REVIEW"
+        gap_status = "БЕЗ ПРОПУСКОВ" if status.total_gaps == 0 else "ПРОВЕРИТЬ"
         self._rows_card.set_metric(
             value=f"{status.total_rows:,}",
-            status="READY" if self._has_data else "EMPTY",
+            status="ГОТОВО" if self._has_data else "ПУСТО",
             tone="success" if self._has_data else "muted",
         )
         self._gaps_card.set_metric(
@@ -623,7 +664,7 @@ class DataPage(QWidget):
         )
         self._instruments_card.set_metric(
             value=str(len(status.instruments)),
-            status="SYNCED",
+            status="СИНХРОНИЗИРОВАНО",
             tone="success",
         )
 
@@ -638,7 +679,7 @@ class DataPage(QWidget):
                 self._format_timestamp(item.max_timestamp),
                 str(item.gap_count),
                 str(item.missing_minutes),
-                "-" if item.checkpoint_status is None else item.checkpoint_status.value,
+                "-" if item.checkpoint_status is None else _status_text(item.checkpoint_status),
                 "-" if progress is None else f"{round(progress * 100)}%",
             )
             for column, value in enumerate(values):
@@ -648,14 +689,14 @@ class DataPage(QWidget):
                     font.setBold(True)
                     cell.setFont(font)
                 if column in {5, 6} and value not in {"0", "-"}:
-                    cell.setToolTip("Data quality issue detected")
+                    cell.setToolTip("Обнаружена проблема качества данных")
                 self._table.setItem(row, column, cell)
         self._update_controls()
 
     def _set_summary_cards_empty(self) -> None:
-        self._rows_card.set_metric(value="—", status="WAITING", tone="muted")
-        self._gaps_card.set_metric(value="—", status="WAITING", tone="muted")
-        self._instruments_card.set_metric(value="—", status="WAITING", tone="muted")
+        self._rows_card.set_metric(value="—", status="ОЖИДАНИЕ", tone="muted")
+        self._gaps_card.set_metric(value="—", status="ОЖИДАНИЕ", tone="muted")
+        self._instruments_card.set_metric(value="—", status="ОЖИДАНИЕ", tone="muted")
 
     @staticmethod
     def _format_timestamp(value: object) -> str:
@@ -672,7 +713,7 @@ class DataPage(QWidget):
         self._start_job(
             self._data.start_sync(self._selected_universe()),
             kind="sync",
-            message="Synchronizing instruments with T-Invest...",
+            message="Синхронизация инструментов с Т-Инвестициями...",
         )
 
     def _start_backfill(self) -> None:
@@ -684,8 +725,8 @@ class DataPage(QWidget):
                 self._data.start_sync(self._selected_universe()),
                 kind="sync",
                 message=(
-                    "Universe is not synchronized. "
-                    "Synchronizing instruments before 5-year backfill..."
+                    "Набор инструментов не синхронизирован. "
+                    "Сначала выполняется синхронизация перед загрузкой истории за 5 лет..."
                 ),
             )
             return
@@ -697,7 +738,7 @@ class DataPage(QWidget):
         self._start_job(
             self._data.start_backfill(self._selected_universe()),
             kind="backfill",
-            message="Starting 5-year historical backfill...",
+            message="Запуск загрузки исторических данных за 5 лет...",
         )
 
     def _resume_backfill(self) -> None:
@@ -705,13 +746,13 @@ class DataPage(QWidget):
             return
         if not self._universe_synchronized or not self._has_checkpoint:
             self._job_message.setText(
-                "Nothing to resume yet. Run Backfill 5 years first."
+                "Продолжать пока нечего. Сначала запустите загрузку истории за 5 лет."
             )
             return
         self._start_job(
             self._data.resume_backfill(self._selected_universe()),
             kind="resume",
-            message="Resuming historical backfill from checkpoint...",
+            message="Продолжение загрузки истории с точки восстановления...",
         )
 
     def _start_validation(self) -> None:
@@ -719,13 +760,13 @@ class DataPage(QWidget):
             return
         if not self._universe_synchronized or not self._has_data:
             self._job_message.setText(
-                "No historical data to validate. Run Backfill 5 years first."
+                "Нет исторических данных для проверки. Сначала загрузите историю за 5 лет."
             )
             return
         self._start_job(
             self._data.start_validation(self._selected_universe()),
             kind="validate",
-            message="Validating historical market data...",
+            message="Проверка качества исторических рыночных данных...",
         )
 
     def _start_job(
@@ -738,7 +779,7 @@ class DataPage(QWidget):
         self._current_job_id = job_id
         self._current_job_kind = kind
         self._job_running = True
-        self._job_status.set_status(JobStatus.PENDING.value, tone="info")
+        self._job_status.set_status(_status_text(JobStatus.PENDING), tone="info")
         self._job_progress.setValue(0)
         self._job_message.setText(message)
         self._update_controls()
@@ -757,11 +798,11 @@ class DataPage(QWidget):
             return
         snapshot = self._data.get_job(self._current_job_id)
         self._job_status.set_status(
-            snapshot.status.value,
+            _status_text(snapshot.status),
             tone=_job_tone(snapshot.status),
         )
         self._job_progress.setValue(round(snapshot.progress * 100))
-        self._job_message.setText(snapshot.error or snapshot.message or "")
+        self._job_message.setText(_job_message_text(snapshot.error or snapshot.message))
 
         if snapshot.status.terminal:
             completed_kind = self._current_job_kind
@@ -847,14 +888,14 @@ class SettingsPage(QWidget):
         layout.setSpacing(18)
         layout.addWidget(
             PageHeader(
-                "Settings",
-                "Локальные настройки и безопасное хранение T-Invest token.",
+                "Настройки",
+                "Локальные настройки и безопасное хранение токена Т-Инвестиций.",
             )
         )
 
         token_card = SectionCard(
-            "T-Invest connection",
-            subtitle="Токен хранится в OS keychain и не записывается в DuckDB.",
+            "Подключение к Т-Инвестициям",
+            subtitle="Токен хранится в системном хранилище учётных данных и не записывается в DuckDB.",
         )
 
         status_row = QHBoxLayout()
@@ -871,11 +912,11 @@ class SettingsPage(QWidget):
 
         self._token_input = QLineEdit()
         self._token_input.setObjectName("tinvestTokenInput")
-        self._token_input.setPlaceholderText("Введите T-Invest token")
+        self._token_input.setPlaceholderText("Введите токен Т-Инвестиций")
         self._token_input.setEchoMode(QLineEdit.EchoMode.Password)
         token_card.content.addWidget(self._token_input)
 
-        self._persist_checkbox = QCheckBox("Сохранить в OS keychain")
+        self._persist_checkbox = QCheckBox("Сохранить в системном хранилище")
         self._persist_checkbox.setObjectName("persistToken")
         self._persist_checkbox.setChecked(True)
         token_card.content.addWidget(self._persist_checkbox)
@@ -907,7 +948,7 @@ class SettingsPage(QWidget):
         layout.addWidget(token_card)
 
         transport_card = SectionCard(
-            "T-Invest transport",
+            "Соединение с Т-Инвестициями",
             subtitle="Официальный Python SDK T-Invest поверх gRPC.",
         )
         transport_label = QLabel(
@@ -930,15 +971,16 @@ class SettingsPage(QWidget):
 
     def refresh_token_status(self) -> None:
         if self._tinvest_token is None:
-            self._token_status.setText("Token: Unavailable")
-            self._keychain_status.setText("OS keychain: Unavailable")
+            self._token_status.setText("Токен: недоступен")
+            self._keychain_status.setText("Системное хранилище: недоступно")
             return
 
         status = self._tinvest_token.status()
-        configured = "Configured" if status.configured else "Not configured"
-        self._token_status.setText(f"Token: {configured} ({status.source.value})")
-        keychain = "Available" if status.keychain_available else "Unavailable"
-        self._keychain_status.setText(f"OS keychain: {keychain}")
+        configured = "настроен" if status.configured else "не настроен"
+        source = {"NONE": "нет", "SESSION": "сеанс", "KEYCHAIN": "системное хранилище"}.get(status.source.value, status.source.value)
+        self._token_status.setText(f"Токен: {configured} ({source})")
+        keychain = "доступно" if status.keychain_available else "недоступно"
+        self._keychain_status.setText(f"Системное хранилище: {keychain}")
         if status.error:
             self._keychain_status.setToolTip(status.error)
         else:
@@ -959,7 +1001,8 @@ class SettingsPage(QWidget):
 
         self._token_input.clear()
         source = TokenSource.KEYCHAIN if self._persist_checkbox.isChecked() else TokenSource.SESSION
-        self._token_message.setText(f"Token configured for {source.value.lower()}.")
+        source_text = "системного хранилища" if source is TokenSource.KEYCHAIN else "текущего сеанса"
+        self._token_message.setText(f"Токен настроен для {source_text}.")
         self.refresh_token_status()
 
     def _clear_token(self) -> None:
@@ -973,5 +1016,5 @@ class SettingsPage(QWidget):
             return
 
         self._token_input.clear()
-        self._token_message.setText("Token removed.")
+        self._token_message.setText("Токен удалён.")
         self.refresh_token_status()
