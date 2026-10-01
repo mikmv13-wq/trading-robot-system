@@ -82,11 +82,14 @@ if errorlevel 1 goto :failed
 
 set "TBANK_CA_DIR=%TEMP%\\trading-robot-system-ca"
 if not exist "%TBANK_CA_DIR%" mkdir "%TBANK_CA_DIR%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -UseBasicParsing -Uri 'https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt' -OutFile '%TBANK_CA_DIR%\\root.pem'; Invoke-WebRequest -UseBasicParsing -Uri 'https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt' -OutFile '%TBANK_CA_DIR%\\sub.pem'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -UseBasicParsing -Uri 'https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt' -OutFile '%TBANK_CA_DIR%\\root.pem'"
 if errorlevel 1 goto :failed
-copy /b "%TBANK_CA_DIR%\\root.pem"+"%TBANK_CA_DIR%\\sub.pem" "%TBANK_CA_DIR%\\bundle.pem" >nul
-if errorlevel 1 goto :failed
-"%VENV_PYTHON%" -m pip install "t-tech-investments>=1.49.2,<2.0" --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --cert "%TBANK_CA_DIR%\\bundle.pem"
+findstr /C:"-----BEGIN CERTIFICATE-----" "%TBANK_CA_DIR%\\root.pem" >nul
+if errorlevel 1 (
+    echo ERROR: Downloaded T-Bank root CA is not a valid PEM certificate.
+    goto :failed
+)
+"%VENV_PYTHON%" -m pip install "t-tech-investments>=1.49.2,<2.0" --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --cert "%TBANK_CA_DIR%\\root.pem"
 if errorlevel 1 goto :failed
 
 "%VENV_PYTHON%" -m pip install -e .
