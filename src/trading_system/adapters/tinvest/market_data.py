@@ -1,54 +1,46 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import cast
 
-from trading_system.adapters.tinvest.instruments import (
-    JsonHttpTransport,
-    TInvestAuthenticationError,
-    TInvestResponseError,
-    UrllibJsonHttpTransport,
-)
+from trading_system.adapters.tinvest.errors import TInvestResponseError
+from trading_system.adapters.tinvest.sdk import CandleInterval, CandleSource
+from trading_system.adapters.tinvest.session import TInvestGrpcSession
 from trading_system.domain import Candle1m
 
 
 class TInvestCandleNormalizer:
-    """Convert T-Invest REST candle payloads into domain Candle1m values."""
+    """Convert T-Invest SDK HistoricCandle objects into domain Candle1m values."""
 
     _NANO_SCALE = Decimal("0.000000001")
 
-    def normalize(
-        self,
-        instrument_uid: str,
-        payload: Mapping[str, object],
-    ) -> Candle1m:
+    def normalize(self, instrument_uid: str, candle: object) -> Candle1m:
         try:
             return Candle1m(
                 instrument_uid=instrument_uid,
-                ts=self._timestamp(payload.get("time")),
-                open=self._quotation(payload.get("open"), "open"),
-                high=self._quotation(payload.get("high"), "high"),
-                low=self._quotation(payload.get("low"), "low"),
-                close=self._quotation(payload.get("close"), "close"),
-                volume=self._integer(payload.get("volume"), "volume"),
-                is_complete=self._boolean(payload.get("isComplete"), "isComplete"),
+                ts=self._timestamp(getattr(candle, "time", None)),
+                open=self._quotation(getattr(candle, "open", None), "open"),
+                high=self._quotation(getattr(candle, "high", None), "high"),
+                low=self._quotation(getattr(candle, "low", None), "low"),
+                close=self._quotation(getattr(candle, "close", None), "close"),
+                volume=self._integer(getattr(candle, "volume", None), "volume"),
+                is_complete=self._boolean(
+                    getattr(candle, "is_complete", None),
+                    "is_complete",
+                ),
             )
         except ValueError as exc:
             raise TInvestResponseError(f"invalid T-Invest candle: {exc}") from exc
 
     @classmethod
     def _quotation(cls, value: object, field_name: str) -> Decimal:
-        if not isinstance(value, dict):
-            raise ValueError(f"{field_name} quotation must be an object")
+        if value is None:
+            raise ValueError(f"{field_name} quotation is missing")
 
-        quotation = cast(dict[str, object], value)
-        units = quotation.get("units")
-        nano = quotation.get("nano")
-
+        units = getattr(value, "units", None)
+        nano = getattr(value, "nano", None)
         if isinstance(units, bool) or not isinstance(units, (str, int)):
-            raise ValueError(f"{field_name}.units must be an integer string")
+            raise ValueError(f"{field_name}.units must be an integer")
         if isinstance(nano, bool) or not isinstance(nano, int):
             raise ValueError(f"{field_name}.nano must be an integer")
         if nano < -999_999_999 or nano > 999_999_999:
@@ -57,28 +49,17 @@ class TInvestCandleNormalizer:
         try:
             units_decimal = Decimal(str(units))
         except InvalidOperation as exc:
-            raise ValueError(f"{field_name}.units must be an integer string") from exc
-
+            raise ValueError(f"{field_name}.units must be an integer") from exc
         if units_decimal != units_decimal.to_integral_value():
-            raise ValueError(f"{field_name}.units must be an integer string")
+            raise ValueError(f"{field_name}.units must be an integer")
 
         return units_decimal + (Decimal(nano) * cls._NANO_SCALE)
 
     @staticmethod
     def _integer(value: object, field_name: str) -> int:
-        if isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(f"{field_name} must be an integer")
-
-        if isinstance(value, int):
-            return value
-
-        if isinstance(value, str):
-            try:
-                return int(value)
-            except ValueError as exc:
-                raise ValueError(f"{field_name} must be an integer string") from exc
-
-        raise ValueError(f"{field_name} must be an integer string")
+        return value
 
     @staticmethod
     def _boolean(value: object, field_name: str) -> bool:
@@ -88,37 +69,26 @@ class TInvestCandleNormalizer:
 
     @staticmethod
     def _timestamp(value: object) -> datetime:
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("time must be an RFC3339 timestamp")
-
-        try:
-            timestamp = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError("time must be an RFC3339 timestamp") from exc
-
-        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        if not isinstance(value, datetime):
+            raise ValueError("time must be a datetime")
+        if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("time must include a timezone")
-        return timestamp.astimezone(UTC)
+        return value.astimezone(UTC)
 
 
-class TInvestMarketDataRestClient:
-    _GET_CANDLES_PATH = (
-        "/tinkoff.public.invest.api.contract.v1.MarketDataService/GetCandles"
-    )
+class TInvestMarketDataGrpcClient:
+    """Historical 1m candle adapter backed by the official T-Invest gRPC SDK."""
+
     _MAX_1M_RANGE = timedelta(days=1)
     _MAX_1M_LIMIT = 2400
 
     def __init__(
         self,
-        token_provider: Callable[[], str | None],
+        session: TInvestGrpcSession,
         *,
-        base_url: str = "https://invest-public-api.tbank.ru/rest",
-        transport: JsonHttpTransport | None = None,
         normalizer: TInvestCandleNormalizer | None = None,
     ) -> None:
-        self._token_provider = token_provider
-        self._base_url = base_url.rstrip("/")
-        self._transport = transport or UrllibJsonHttpTransport()
+        self._session = session
         self._normalizer = normalizer or TInvestCandleNormalizer()
 
     def get_candles(
@@ -138,37 +108,33 @@ class TInvestMarketDataRestClient:
         if to_ts - from_ts > self._MAX_1M_RANGE:
             raise ValueError("1m candle request range must not exceed one day")
 
-        token = self._token_provider()
-        if token is None or not token.strip():
-            raise TInvestAuthenticationError("T-Invest token is not configured")
-
-        response = self._transport.post(
-            f"{self._base_url}{self._GET_CANDLES_PATH}",
-            headers={"Authorization": f"Bearer {token.strip()}"},
-            payload={
-                "from": self._format_utc(from_ts),
-                "to": self._format_utc(to_ts),
-                "interval": "CANDLE_INTERVAL_1_MIN",
-                "instrumentId": normalized_uid,
-                "candleSourceType": "CANDLE_SOURCE_EXCHANGE",
-                "limit": self._MAX_1M_LIMIT,
-            },
+        response = self._session.execute(
+            lambda client: client.market_data.get_candles(
+                instrument_id=normalized_uid,
+                from_=from_ts,
+                to=to_ts,
+                interval=CandleInterval.CANDLE_INTERVAL_1_MIN,
+                candle_source_type=CandleSource.CANDLE_SOURCE_EXCHANGE,
+                limit=self._MAX_1M_LIMIT,
+            )
         )
-        raw_candles = response.get("candles")
-        if not isinstance(raw_candles, list):
+        raw_candles = getattr(response, "candles", None)
+        if raw_candles is None or isinstance(raw_candles, (str, bytes)):
             raise TInvestResponseError(
                 "T-Invest GetCandles response does not contain candles"
             )
 
+        try:
+            sdk_candles = tuple(raw_candles)
+        except TypeError as exc:
+            raise TInvestResponseError(
+                "T-Invest GetCandles response contains invalid candles"
+            ) from exc
+
         candles: list[Candle1m] = []
         previous_ts: datetime | None = None
-        for raw_candle in raw_candles:
-            if not isinstance(raw_candle, dict):
-                raise TInvestResponseError("T-Invest candle must be an object")
-            candle = self._normalizer.normalize(
-                normalized_uid,
-                cast(dict[str, object], raw_candle),
-            )
+        for raw_candle in sdk_candles:
+            candle = self._normalizer.normalize(normalized_uid, raw_candle)
             if candle.ts < from_ts or candle.ts > to_ts:
                 raise TInvestResponseError(
                     "T-Invest candle timestamp is outside requested range"
@@ -188,10 +154,3 @@ class TInvestMarketDataRestClient:
             raise ValueError(f"{field_name} must be timezone-aware UTC")
         if value.utcoffset() != timedelta(0):
             raise ValueError(f"{field_name} must be UTC")
-
-    @staticmethod
-    def _format_utc(value: datetime) -> str:
-        return value.astimezone(UTC).isoformat(timespec="microseconds").replace(
-            "+00:00",
-            "Z",
-        )
